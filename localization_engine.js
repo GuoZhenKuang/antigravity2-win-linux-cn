@@ -364,6 +364,22 @@ function generateJs() {
                     newVal = valNorm.replace(/^(\\d+) tools? enabled$/i, (match, num) => {
                         return num + " 个工具已启用";
                     });
+                } else if (/^(\\d+) active conversations?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+) active conversations?$/i, (match, num) => {
+                        return num + " 个活跃对话";
+                    });
+                } else if (/^(\\d+) archived conversations?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+) archived conversations?$/i, (match, num) => {
+                        return num + " 个已归档对话";
+                    });
+                } else if (/^(\\d+) tasks? running$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+) tasks? running$/i, (match, num) => {
+                        return num + " 个任务正在运行";
+                    });
+                } else if (/^(\\d+) files? changed$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+) files? changed$/i, (match, num) => {
+                        return num + " 个文件已更改";
+                    });
                 } else if (/^Show (\\d+) more(\\.\\.\\.|…)?$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Show (\\d+) more(\\.\\.\\.|…)?$/i, (match, num) => {
                         return "显示另外 " + num + " 个...";
