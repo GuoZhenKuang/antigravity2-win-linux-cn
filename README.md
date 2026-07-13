@@ -2,10 +2,11 @@
 
 > **Fork 自**：[qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn) — 感谢原作者 [qqxpee](https://github.com/qqxpee) 的辛勤付出！
 
-> **支持系统**：Windows (已内置一键脚本)  
+> **支持系统**：Windows 平台独占 (针对 Windows 环境进行了深度优化与排印微调，已内置一键脚本)  
+> **语言支持**：仅简体中文 (去除了繁体中文及其他冗余翻译，专注极佳的简中开发体验)  
 > **匹配版本**：Antigravity v2.2.1  
 > **核心引擎**：Node.js (无需安装 Python，零依赖，极速极稳)  
-> **汉化范围**：包括软件界面、顶部系统菜单、任务栏右键菜单、加载动画、设置面板、新手引导及登录页、MCP服务器列表以及其他可翻译的更新。  
+> **汉化范围**：包括软件界面、顶部系统菜单、任务栏右键菜单、加载动画、设置面板、新手引导及登录页、MCP 服务器列表以及其他可翻译的更新。  
 > **注入原理**：通过 ASAR 还原与重包，安全注入 `preload.js` 动态翻译机制，绝不修改核心二进制，一键安装与完美还原。
 
 > [!WARNING]
@@ -157,7 +158,7 @@ node localization_engine.js --brand-title translated
 ```json
 "Original English Text": "您的中文翻译"
 ```
-保存后，双击运行 **`双击安装中文汉化.bat` / `.command`** 重新部署汉化即可。
+保存后，双击运行 **`双击安装中文汉化.bat`** 重新部署汉化即可。
 
 ---
 
