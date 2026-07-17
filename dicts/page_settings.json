@@ -1,4 +1,5 @@
 {
+    "9222": "9222",
     "Agent Settings": "智能体设置",
     "Loading custom agents...": "正在加载自定义智能体...",
     "Loading metrics...": "正在加载指标数据...",
@@ -215,7 +216,6 @@
     "~/.gemini/antigravity-browser-profile": "~/.gemini/antigravity-browser-profile",
     "Browser CDP Port": "浏览器 CDP 端口",
     "Port number for Chrome DevTools Protocol remote debugging. Leave empty for default (9222).": "用于 Chrome DevTools Protocol 远程调试的端口号。留空则使用默认值 (9222)。",
-    "9222": "9222",
     "By using this app, you agree to its": "使用本应用即表示您同意其",
     "Terms of Service": "服务条款",
     "Provide Feedback": "提供反馈",
@@ -426,5 +426,19 @@
     "Useful for tasks that require file access across your full machine. The agent has full read and write access to all local files, but all proposed terminal commands require manual review and approval before running.": "适用于需要访问整机文件的任务。智能体对所有本地文件拥有完全的读写权限，但所有拟执行的终端命令在运行前均需人工审查和批准。",
     "A high-risk mode that disables all safety barriers. The agent operates with full system access, auto-executes all terminal commands, and reads or writes to all local files without review prompts.": "一种禁用所有安全屏障的高风险模式。智能体在拥有完全系统访问权限下运行，自动执行所有终端命令，读写所有本地文件且无需审查提示。",
     "Artifact Review Policy": "交付件审查策略",
-    "Controls whether terminal commands require your approval before running.": "控制终端命令在运行前是否需要您的批准。"
+    "Controls whether terminal commands require your approval before running.": "控制终端命令在运行前是否需要您的批准。",
+    "Configure agent execution, queued message delivery, and permissions.": "配置智能体执行、队列消息投递以及权限。",
+    "Execution": "执行",
+    "Queued Messages": "队列消息",
+    "Configure when follow-up messages are sent.": "配置后续消息的发送时机。",
+    "Queue After Turn": "每轮对话后排队",
+    "Send Immediately": "立即发送",
+    "Uses global settings when working in this project.": "在这个项目中工作时使用全局设置。",
+    "Use Global": "使用全局设置",
+    "Also includes global settings when working in this project.": "在这个项目中工作时也包含全局设置。",
+    "Also includes 全局设置 when working in this project.": "在这个项目中工作时也包含全局设置。",
+    "You currently don't have any MCP Servers installed. Add an MCP server above or add a custom one via the MCP Config.": "您当前尚未安装任何 MCP 服务器。请在上方添加一个 MCP 服务器，或通过 MCP 配置添加自定义服务器。",
+    " or add a custom one via the MCP Config.": "，或通过 MCP 配置添加自定义服务器。",
+    "Also includes": "在这个项目中工作时也包括",
+    "when working in this project.": "。"
 }

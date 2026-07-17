@@ -266,5 +266,18 @@
     "There are no customizations enabled.": "未启用任何个性化定制。",
     "There are no customizations enabled": "未启用任何个性化定制",
     "No customizations enabled": "未启用个性化定制",
-    "Permanently delete": "永久删除"
+    "Permanently delete": "永久删除",
+    "Conversation Name": "会话名称",
+    "Conversation ID": "会话 ID",
+    "Workspace Name": "工作区名称",
+    "Failed to pin conversation": "置顶会话失败",
+    "No background tasks": "暂无后台任务",
+    "No artifacts generated": "未生成任何交付件",
+    "Uploads": "已上传文件",
+    "View Split Diff": "查看分屏差异",
+    "Open File": "打开文件",
+    "Rules": "规则",
+    "Copy Content": "复制内容",
+    "Copy Path": "复制路径",
+    "Search": "搜索"
 }

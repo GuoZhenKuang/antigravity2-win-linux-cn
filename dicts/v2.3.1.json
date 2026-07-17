@@ -854,6 +854,7 @@
     "Set Project Name": "设置项目名称",
     "Setting": "设置",
     "Show 1 breakdown": "显示 1 项明细",
+    "Show 2 breakdowns": "显示 2 项明细",
     "Show all resources": "显示所有资源",
     "Show Error": "显示错误",
     "Show Sidebar": "显示侧边栏",
@@ -1056,5 +1057,15 @@
     "Your feedback directly improves Gemini. See": "您的反馈可直接改进 Gemini。参阅",
     "Your Plan": "您的计划",
     "Your Plan:": "您的计划：",
-    "Your quota for this model is running low.": "您对此模型的配额即将用尽。"
+    "Your quota for this model is running low.": "您对此模型的配额即将用尽。",
+    "Confirming this undo action will make the following changes:": "确认此撤销操作将进行以下更改：",
+    "The gopls Model Context Protocol (MCP) server provides tools for semantic code analysis, live diagnostics, and transformation of your Go codebase.": "gopls 模型上下文协议 (MCP) 服务器为您的 Go 代码库提供语义代码分析、实时诊断和转换工具。",
+    "Ask questions. Get answers. The MCP is a server your coding agent talks to. Ask a question in English. It runs the query against your PostHog data. The answer lands in your chat.": "提问，获得解答。MCP 是您的编程智能体与之对话的服务器。用英文提问，它将针对您的 PostHog 数据运行查询，结果将直接呈现在您的聊天中。",
+    "This undo action will not make any code changes.": "此撤销操作将不会对代码进行任何更改。",
+    "Ask questions. Get answers. The MCP is a server your coding agent talks to. Ask a question in English. It runs the query against your PostHog data. The answer lands in your editor. No SQL. No dashboards. No tabs full of charts you forgot you opened. Try things like: - \"How many unique users signed up in the last 7 days, broken down by day?\" - \"Create an A/B test for our pricing page that measures conversion to checkout.\" - \"What are the top 5 errors in my project this week?\"": "提问，获得解答。MCP 是您的编程智能体与之对话的服务器。使用英文提问，它将针对您的 PostHog 数据运行查询。答案将直接呈现在您的编辑器中。无需 SQL，无需仪表板，无需满屏忘记关闭的图表标签页。可以尝试以下提问方式： - “过去 7 天内有多少独立用户注册，按天细分？” - “为我们的定价页面创建一个 A/B 测试，衡量到结账页面的转化率。” - “本周我的项目中最主要的 5 个错误是什么？”",
+    "antigravity-guide": "Antigravity 使用指南",
+    "Provides a comprehensive guide, quick reference, and sitemap for Google Antigravity (AGY), including the Antigravity CLI (agy), Antigravity 2.0, Antigravity IDE, Python SDK, slash commands, keybindings, and customizations (skills, rules, MCP, sidecars).": "为 Google Antigravity (AGY) 提供全面的指南、快速参考和网站地图，包括 Antigravity 命令行界面 (agy)、Antigravity 2.0、Antigravity IDE、Python SDK、斜杠命令、键位绑定以及个性化定制 (技能、规则、MCP、Sidecar)。",
+    "Ask a quick question without interrupting the main conversation.": "在不中断主会话的情况下快速提问。",
+    "learn": "学习",
+    "Reflect on recent successes or corrections to capture reusable skills or rules.": "反思最近的成功或改进，以捕获可复用的技能或规则。"
 }
