@@ -264,6 +264,10 @@ function generateJs() {
                     newVal = map.get(valNorm);
                 } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+search(?:es)?(\\s*[>v])?\\s*$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(\\d+)\\s+files?,\\s*(\\d+)\\s+search(?:es)?(\\s*[>v])?\\s*$/i, (m, nf, ns) => nf + " 个文件，" + ns + " 次搜索");
+                } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+tasks?(\\s*[>v])?\\s*$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+)\\s+files?,\\s*(\\d+)\\s+tasks?(\\s*[>v])?\\s*$/i, (m, nf, nt) => nf + " 个文件，" + nt + " 个任务");
+                } else if (/^(\\d+)\\s+tasks?(\\s*[>v,])?\\s*$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+)\\s+tasks?/, (m, n) => n + " 个任务");
                 } else if (/^(\\d+)\\s+files?(\\s*[>v,])?\\s*$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(\\d+)\\s+files?/, (m, n) => n + " 个文件");
                 } else if (/^(\\d+)\\s+search(?:es)?(\\s*[>v,])?\\s*$/i.test(valNorm)) {
@@ -272,6 +276,8 @@ function generateJs() {
                     newVal = valNorm.replace(/^(\\d+)\\s+commands?/, (m, n) => n + " 条命令");
                 } else if (/^\\s+search(?:es)?(\\s*>)?\\s*$/i.test(originalVal)) {
                     newVal = "次搜索";
+                } else if (/^\\s+tasks?(\\s*>)?\\s*$/i.test(originalVal)) {
+                    newVal = "个任务";
                 } else if (/^\\s+files?(\\s*>)?\\s*$/i.test(originalVal)) {
                     newVal = "个文件";
                 } else if (/^\\s+commands?(\\s*>)?\\s*$/i.test(originalVal)) {
@@ -353,6 +359,14 @@ function generateJs() {
                 } else if (/^Error ID:\\s*(.+)$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Error ID:\\s*(.+)$/i, (match, id) => {
                         return "错误 ID: " + id;
+                    });
+                } else if (/^Models within this group:\\s*(.+)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Models within this group:\\s*(.+)$/i, (match, models) => {
+                        return "此组内的模型: " + models;
+                    });
+                } else if (/^Executor is not currently running \\(error ID:\\s*(.+)\\)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Executor is not currently running \\(error ID:\\s*(.+)\\)$/i, (match, id) => {
+                        return "执行器当前未运行 (错误 ID: " + id + ")";
                     });
                 } else if (/^Thought for ([\\d\\.]+)(s|ms|m|min)(?:\\s*>)?$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Thought for ([\\d\\.]+)(s|ms|m|min)(?:\\s*>)?$/i, (match, val, unit) => {
@@ -445,6 +459,35 @@ function generateJs() {
                     newVal = valNorm.replace(/^Available AI Credits: (\\d+)$/i, (match, num) => {
                         return "可用 AI 额度: " + num;
                     });
+                } else if (/^Send feedback as\\s+(.+)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Send feedback as\\s+(.+)$/i, (match, email) => {
+                        return "发送反馈身份为 " + email;
+                    });
+                } else if (/^Media\\s*\\((.+)\\)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Media\\s*\\((.+)\\)$/i, (match, timeStr) => {
+                        let t = timeStr.replace(/Today/i, '今天').replace(/Yesterday/i, '昨天');
+                        return "媒体 (" + t + ")";
+                    });
+                } else if (/^Updated\\s+(.+)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Updated\\s+(.+)$/i, (match, rest) => {
+                        return "更新于 " + rest;
+                    });
+                } else if (/^All scheduled tasks run as (.+?)[\.\s]*$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^All scheduled tasks run as (.+?)[\.\s]*$/i, (match, model) => {
+                        return "所有计划任务均以 " + model + " 模型运行。";
+                    });
+                } else if (/^Mark\s+(\d+)\s+conversations?\s+as\s+read$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Mark\s+(\d+)\s+conversations?\s+as\s+read$/i, (match, num) => {
+                        return "将 " + num + " 个对话标记为已读";
+                    });
+                } else if (/^Mark\s+(\d+)\s+conversations?\s+as\s+unread$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Mark\s+(\d+)\s+conversations?\s+as\s+unread$/i, (match, num) => {
+                        return "将 " + num + " 个对话标记为未读";
+                    });
+                } else if (/^Mark\s+all\s+(?:conversations?\s+)?as\s+read$/i.test(valNorm)) {
+                    newVal = "将所有对话标记为已读";
+                } else if (/^Mark\s+all\s+(?:conversations?\s+)?as\s+unread$/i.test(valNorm)) {
+                    newVal = "将所有对话标记为未读";
                 } else if (/^Version\\s+([\\d\\.]+)$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Version\\s+([\\d\\.]+)$/i, (match, v) => {
                         return "版本 " + v;
@@ -725,13 +768,48 @@ function detectInstallationDir(manualDir) {
         // Linux 常见安装路径
         const homeDir = process.env.HOME || '';
         addCandidate('/opt/Antigravity');
+        addCandidate('/opt/Antigravity/Antigravity-x64');
         addCandidate('/opt/antigravity');
+        addCandidate('/opt/antigravity/antigravity-x64');
         addCandidate('/usr/share/antigravity');
+        addCandidate('/usr/share/Antigravity');
         addCandidate('/usr/lib/antigravity');
+        addCandidate('/usr/lib/Antigravity');
         if (homeDir) {
             addCandidate(path.join(homeDir, '.local', 'share', 'antigravity'));
+            addCandidate(path.join(homeDir, '.local', 'share', 'Antigravity'));
             addCandidate(path.join(homeDir, 'antigravity'));
         }
+        // 解析 .desktop 文件
+        const desktopFiles = [
+            '/usr/share/applications/antigravity.desktop',
+            '/usr/share/applications/Antigravity.desktop',
+            path.join(homeDir, '.local', 'share', 'applications', 'antigravity.desktop'),
+            path.join(homeDir, '.local', 'share', 'applications', 'Antigravity.desktop')
+        ];
+        for (const df of desktopFiles) {
+            if (fs.existsSync(df)) {
+                try {
+                    const content = fs.readFileSync(df, 'utf-8');
+                    const execMatch = content.match(/^Exec=(.+)$/m);
+                    if (execMatch) {
+                        let execPath = execMatch[1].trim().split(/\s+/)[0].replace(/^"|"$/g, '');
+                        if (fs.existsSync(execPath)) {
+                            try { execPath = fs.realpathSync(execPath); } catch (e) {}
+                            addCandidate(path.dirname(execPath));
+                        }
+                    }
+                } catch (e) {}
+            }
+        }
+        // 解析 which 输出
+        try {
+            const whichOut = child_process.execSync('which antigravity 2>/dev/null || which agy 2>/dev/null', { encoding: 'utf-8' }).trim();
+            if (whichOut && fs.existsSync(whichOut)) {
+                const realP = fs.realpathSync(whichOut);
+                addCandidate(path.dirname(realP));
+            }
+        } catch (e) {}
         // Snap
         addCandidate('/snap/antigravity/current');
         addCandidate('/snap/antigravity/current/usr/share/antigravity');
@@ -743,9 +821,23 @@ function detectInstallationDir(manualDir) {
     }
 
     for (const p of candidates) {
-        if (fs.existsSync(p) && hasAntigravityResources(p)) {
-            console.log(`[探测] 成功自动识别到 Antigravity 安装目录: ${p}`);
-            return path.resolve(p);
+        if (fs.existsSync(p)) {
+            if (hasAntigravityResources(p)) {
+                console.log(`[探测] 成功自动识别到 Antigravity 安装目录: ${p}`);
+                return path.resolve(p);
+            }
+            try {
+                if (fs.statSync(p).isDirectory()) {
+                    const subItems = fs.readdirSync(p);
+                    for (const sub of subItems) {
+                        const subPath = path.join(p, sub);
+                        if (fs.existsSync(subPath) && fs.statSync(subPath).isDirectory() && hasAntigravityResources(subPath)) {
+                            console.log(`[探测] 成功自动识别到 Antigravity 安装目录: ${subPath}`);
+                            return path.resolve(subPath);
+                        }
+                    }
+                }
+            } catch (e) {}
         }
     }
 

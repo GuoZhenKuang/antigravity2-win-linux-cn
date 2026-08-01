@@ -53,8 +53,8 @@
     "Recent Files": "最近的文件",
     "Search for files in the project...": "在项目中搜索文件...",
     "Code Search": "代码搜索",
-    "Artifact": "交付件(Artifact)",
-    "Artifacts": "交付件列表(Artifacts)",
+    "Artifact": "交付件",
+    "Artifacts": "交付件列表",
     "Artifact Name": "交付件名称",
     "Comments": "注释/评论",
     "Context": "上下文",
@@ -291,5 +291,6 @@
     " searches": " 次搜索",
     " file": " 个文件",
     " files": " 个文件",
-    "Ran ": "运行了 "
+    "Ran ": "运行了 ",
+    "Failed to stop agent": "停止智能体失败"
 }
