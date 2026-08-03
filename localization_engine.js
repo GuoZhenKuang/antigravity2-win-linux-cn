@@ -158,6 +158,143 @@ function generateJs() {
         return false;
     }
 
+    // 查找当前节点之前最近的、带有实际文本的文本节点。React 常会把一句 UI
+    // 文案拆到多个 span / Text 节点中，不能只依赖当前节点的内容。
+    function findLastTextNode(node) {
+        if (!node) return null;
+        if (node.nodeType === Node.TEXT_NODE) {
+            return node.nodeValue && node.nodeValue.trim() ? node : null;
+        }
+        if (!node.childNodes) return null;
+        for (let i = node.childNodes.length - 1; i >= 0; i--) {
+            const found = findLastTextNode(node.childNodes[i]);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    function findPreviousTextNode(node) {
+        let current = node;
+        while (current) {
+            let sibling = current.previousSibling;
+            while (sibling) {
+                const found = findLastTextNode(sibling);
+                if (found) return found;
+                sibling = sibling.previousSibling;
+            }
+            current = current.parentNode || current.host || null;
+        }
+        return null;
+    }
+
+    function replaceTextNode(node, value) {
+        if (!node) return;
+        translatedValues.set(node, value);
+        node.nodeValue = value;
+    }
+
+    // React 会把同一段 JSX 文案任意拆成多个相邻 Text 节点。先将同一元素中的
+    // 连续文本片段拼接后匹配词典，再把译文写回第一个节点，避免残留英文碎片。
+    function getCombinedStatusTranslation(value) {
+        const normalized = norm(value);
+        if (!normalized) return null;
+        if (map.has(normalized)) return map.get(normalized);
+        if (lowerMap.has(normalized.toLowerCase())) return lowerMap.get(normalized.toLowerCase());
+
+        const toolMatch = normalized.match(/^(\\d+)\\s+tools?\\s+enabled$/i);
+        if (toolMatch) return toolMatch[1] + " 个工具已启用";
+
+        const scheduleMatch = normalized.match(/^All scheduled tasks run as\\s+(.+)$/i);
+        if (scheduleMatch) {
+            const model = scheduleMatch[1].replace(/[.。]+$/, '').trim();
+            if (model) return "所有计划任务均以 " + model + " 模型运行。";
+        }
+        return null;
+    }
+
+    function translateCombinedTextChildren(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) {
+            return false;
+        }
+
+        let textRun = [];
+        const translateRun = () => {
+            if (textRun.length < 2) return false;
+            const original = textRun.map(textNode => textNode.nodeValue || '').join('');
+            const translated = getCombinedStatusTranslation(original);
+            if (!translated || translated === original) return false;
+            replaceTextNode(textRun[0], translated);
+            for (let i = 1; i < textRun.length; i++) replaceTextNode(textRun[i], '');
+            return true;
+        };
+
+        for (const child of element.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+                textRun.push(child);
+                continue;
+            }
+            if (translateRun()) return true;
+            textRun = [];
+        }
+        return translateRun();
+    }
+
+    // 处理被框架拆开的动态状态文案。比如：
+    //   "29 " + "tool" + "s enabled"
+    //   "All scheduled tasks run as " + "Flash."
+    // 第一类在单节点词典匹配时会留下 "工具s enabled"；第二类的模型名是动态的，
+    // 无法为每一个模型名添加静态词条。
+    function translateFragmentedStatus(node, originalVal) {
+        const currentText = norm(originalVal);
+        const previous = findPreviousTextNode(node);
+        const previousText = previous ? norm(previous.nodeValue) : '';
+
+        // “29 tool” + “s enabled” 这类分割：直接在前一节点完成整句翻译。
+        if (/^s\\s+enabled$/i.test(currentText) && previous) {
+            const countAndTool = previousText.match(/^(\\d+)\\s+tools?$/i);
+            if (countAndTool) {
+                replaceTextNode(previous, countAndTool[1] + " 个工具已启用");
+                return '';
+            }
+        }
+
+        // “29 ” + “tool(s)” + “enabled” 或 “s enabled” 这类分割。
+        // 工具节点可能已经被单词词典翻成“工具”，因此同时识别中英文。
+        const isEnabledSuffix = /^s\\s+enabled$/i.test(currentText) || /^enabled$/i.test(currentText);
+        if (isEnabledSuffix && previous) {
+            let toolNode = previous;
+            let toolText = previousText;
+
+            // “tool” + “s” + “enabled” 会在处理 enabled 时遇到中间的 s 节点。
+            if (/^s$/i.test(toolText) && /^enabled$/i.test(currentText)) {
+                toolNode = findPreviousTextNode(previous);
+                toolText = toolNode ? norm(toolNode.nodeValue) : '';
+                replaceTextNode(previous, '');
+            }
+
+            const countNode = toolNode ? findPreviousTextNode(toolNode) : null;
+            const countText = countNode ? norm(countNode.nodeValue) : '';
+            if (/^(?:tool|tools|工具)$/i.test(toolText) && /^\\d+$/.test(countText)) {
+                replaceTextNode(toolNode, '');
+                return " 个工具已启用";
+            }
+        }
+
+        // “所有计划任务均以 ”已经由前缀词典翻译后，再把其后的动态模型名补全。
+        // 这也会在模型名异步插入时由 MutationObserver 自动生效。
+        if (previousText === "所有计划任务均以" && currentText && !/[\\u4e00-\\u9fff]/.test(currentText)) {
+            const model = currentText.replace(/[.。]+$/, '').trim();
+            if (model) return model + " 模型运行。";
+        }
+
+        // 模型名与句号被拆成两个节点时，移除遗留的英文句号，避免显示“。.”。
+        if (/^[.。]$/.test(currentText) && /模型运行。$/.test(previousText)) {
+            return '';
+        }
+
+        return null;
+    }
+
     function translateNode(node) {
         try {
             if (!node) return;
@@ -212,6 +349,7 @@ function generateJs() {
                 
                 // 2. 只有当确实不在禁区时，才翻译其属性
                 if (!isInBlockedZone(node)) {
+                    translateCombinedTextChildren(node);
                     for (const attr of ['placeholder', 'title', 'aria-label']) {
                         const v = node.getAttribute(attr);
                         if (v) {
@@ -250,6 +388,9 @@ function generateJs() {
                 // 核心：在处理文本节点前，必须确认其不在“禁止区”
                 if (isInBlockedZone(node)) return;
 
+                // 文案可能在当前节点刚插入时才拼接完整，需从父元素重新检查整段。
+                if (translateCombinedTextChildren(node.parentElement)) return;
+
                 if (translatedValues.get(node) === originalVal) return;
 
                 let newVal = originalVal;
@@ -258,7 +399,10 @@ function generateJs() {
                 
                 // 1. 精确匹配（含大小写自动纠正与快捷键检测）
                 const shortcutTrans = translateWithShortcut(valNorm);
-                if (shortcutTrans) {
+                const fragmentedStatusTrans = translateFragmentedStatus(node, originalVal);
+                if (fragmentedStatusTrans !== null) {
+                    newVal = fragmentedStatusTrans;
+                } else if (shortcutTrans) {
                     newVal = shortcutTrans;
                 } else if (map.has(valNorm)) {
                     newVal = map.get(valNorm);
@@ -308,6 +452,10 @@ function generateJs() {
                     newVal = valNorm.replace(/^You have used some of your weekly limit, it will fully refresh in (\\d+) days?, (\\d+) hours?\\.$/i, (match, d, h) => {
                         return "您已使用部分每周配额，将在 " + d + " 天 " + h + " 小时后完全刷新。";
                     });
+                } else if (/^You have used some of your weekly limit, it will fully refresh in (\\d+) hours?, (\\d+) minutes?\\.$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^You have used some of your weekly limit, it will fully refresh in (\\d+) hours?, (\\d+) minutes?\\.$/i, (match, h, m) => {
+                        return "您已使用部分每周配额，将在 " + h + " 小时 " + m + " 分钟后完全刷新。";
+                    });
                 } else if (/^You have used some of your weekly limit, it will fully refresh in (\\d+) days?\\.$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^You have used some of your weekly limit, it will fully refresh in (\\d+) days?\\.$/i, (match, d) => {
                         return "您已使用部分每周配额，将在 " + d + " 天后完全刷新。";
@@ -315,6 +463,10 @@ function generateJs() {
                 } else if (/^You have used some of your weekly limit, it will fully refresh in (\\d+) hours?\\.$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^You have used some of your weekly limit, it will fully refresh in (\\d+) hours?\\.$/i, (match, h) => {
                         return "您已使用部分每周配额，将在 " + h + " 小时后完全刷新。";
+                    });
+                } else if (/^You have used some of your weekly limit, it will fully refresh in (\\d+) minutes?\\.$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^You have used some of your weekly limit, it will fully refresh in (\\d+) minutes?\\.$/i, (match, m) => {
+                        return "您已使用部分每周配额，将在 " + m + " 分钟后完全刷新。";
                     });
                 } else if (/^You have used some of your 5-hour limit, it will fully refresh in (\\d+) hours?, (\\d+) minutes?\\.$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^You have used some of your 5-hour limit, it will fully refresh in (\\d+) hours?, (\\d+) minutes?\\.$/i, (match, h, m) => {
@@ -402,6 +554,10 @@ function generateJs() {
                     newVal = valNorm.replace(/^You have hit your weekly limit, it will fully refresh in (\\d+) days?, (\\d+) hours?\\.$/i, (match, d, h) => {
                         return "您已达到每周配额限制，将在 " + d + " 天 " + h + " 小时后完全刷新。";
                     });
+                } else if (/^You have hit your weekly limit, it will fully refresh in (\\d+) hours?, (\\d+) minutes?\\.$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^You have hit your weekly limit, it will fully refresh in (\\d+) hours?, (\\d+) minutes?\\.$/i, (match, h, m) => {
+                        return "您已达到每周配额限制，将在 " + h + " 小时 " + m + " 分钟后完全刷新。";
+                    });
                 } else if (/^You have hit your weekly limit, it will fully refresh in (\\d+) days?\\.$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^You have hit your weekly limit, it will fully refresh in (\\d+) days?\\.$/i, (match, d) => {
                         return "您已达到每周配额限制，将在 " + d + " 天后完全刷新。";
@@ -409,6 +565,10 @@ function generateJs() {
                 } else if (/^You have hit your weekly limit, it will fully refresh in (\\d+) hours?\\.$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^You have hit your weekly limit, it will fully refresh in (\\d+) hours?\\.$/i, (match, h) => {
                         return "您已达到每周配额限制，将在 " + h + " 小时后完全刷新。";
+                    });
+                } else if (/^You have hit your weekly limit, it will fully refresh in (\\d+) minutes?\\.$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^You have hit your weekly limit, it will fully refresh in (\\d+) minutes?\\.$/i, (match, m) => {
+                        return "您已达到每周配额限制，将在 " + m + " 分钟后完全刷新。";
                     });
                 } else if (/^Learn more about (.+)$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Learn more about (.+)$/i, (match, p) => {
@@ -450,6 +610,10 @@ function generateJs() {
                 } else if (/^Show (\\d+) more(\\.\\.\\.|…)?$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Show (\\d+) more(\\.\\.\\.|…)?$/i, (match, num) => {
                         return "显示另外 " + num + " 个...";
+                    });
+                } else if (/^Show (\\d+) breakdowns?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Show (\\d+) breakdowns?$/i, (match, num) => {
+                        return "显示 " + num + " 项明细";
                     });
                 } else if (/^See all \\((\\d+)\\)$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^See all \\((\\d+)\\)$/i, (match, num) => {
@@ -560,14 +724,35 @@ function generateJs() {
                     newVal = newVal.replace(/You have hit your 5-hour limit, it will refresh in (\\d+) minutes?\\. If on a supported paid plan, you can use AI credits in the interim\\./gi, (match, m) => {
                         return "您已达到 5 小时配额限制，将在 " + m + " 分钟后刷新。如果使用的是受支持的付费计划，您可以在此期间使用 AI 额度。";
                     });
+                    newVal = newVal.replace(/You have used some of your weekly limit, it will fully refresh in (\\d+) days?, (\\d+) hours?\\./gi, (match, d, h) => {
+                        return "您已使用部分每周配额，将在 " + d + " 天 " + h + " 小时后完全刷新。";
+                    });
+                    newVal = newVal.replace(/You have used some of your weekly limit, it will fully refresh in (\\d+) hours?, (\\d+) minutes?\\./gi, (match, h, m) => {
+                        return "您已使用部分每周配额，将在 " + h + " 小时 " + m + " 分钟后完全刷新。";
+                    });
+                    newVal = newVal.replace(/You have used some of your weekly limit, it will fully refresh in (\\d+) days?\\./gi, (match, d) => {
+                        return "您已使用部分每周配额，将在 " + d + " 天后完全刷新。";
+                    });
+                    newVal = newVal.replace(/You have used some of your weekly limit, it will fully refresh in (\\d+) hours?\\./gi, (match, h) => {
+                        return "您已使用部分每周配额，将在 " + h + " 小时后完全刷新。";
+                    });
+                    newVal = newVal.replace(/You have used some of your weekly limit, it will fully refresh in (\\d+) minutes?\\./gi, (match, m) => {
+                        return "您已使用部分每周配额，将在 " + m + " 分钟后完全刷新。";
+                    });
                     newVal = newVal.replace(/You have hit your weekly limit, it will fully refresh in (\\d+) days?, (\\d+) hours?\\./gi, (match, d, h) => {
                         return "您已达到每周配额限制，将在 " + d + " 天 " + h + " 小时后完全刷新。";
+                    });
+                    newVal = newVal.replace(/You have hit your weekly limit, it will fully refresh in (\\d+) hours?, (\\d+) minutes?\\./gi, (match, h, m) => {
+                        return "您已达到每周配额限制，将在 " + h + " 小时 " + m + " 分钟后完全刷新。";
                     });
                     newVal = newVal.replace(/You have hit your weekly limit, it will fully refresh in (\\d+) days?\\./gi, (match, d) => {
                         return "您已达到每周配额限制，将在 " + d + " 天后完全刷新。";
                     });
                     newVal = newVal.replace(/You have hit your weekly limit, it will fully refresh in (\\d+) hours?\\./gi, (match, h) => {
                         return "您已达到每周配额限制，将在 " + h + " 小时后完全刷新。";
+                    });
+                    newVal = newVal.replace(/You have hit your weekly limit, it will fully refresh in (\\d+) minutes?\\./gi, (match, m) => {
+                        return "您已达到每周配额限制，将在 " + m + " 分钟后完全刷新。";
                     });
                     // 步骤节点量词片段翻译（处理 Explored N search / file 等拆分文本节点）
                     newVal = newVal.replace(/^(\\d+)\\s+searches?\\s*>?\\s*$/i, (m, n) => n + " 次搜索");
