@@ -8,6 +8,8 @@
 >
 > **匹配版本**：Antigravity v2.4.3
 >
+> **最近更新**：2026-08-03
+>
 > **核心引擎**：Node.js (无需安装 Python，零依赖，极速极稳)
 >
 > **汉化范围**：包括软件界面、顶部系统菜单、任务栏右键菜单、加载动画、设置面板、新手引导及登录页、MCP 服务器列表以及其他可翻译的更新。
@@ -45,6 +47,7 @@
 - **`uninstall.sh`**：Linux 一键完美恢复原版入口。
 - **`localization_engine.js`**：核心汉化逻辑，跨平台自动适配，负责 app.asar 的解包、代码注入和重新打包。
 - **`dicts/`**：汉化字典文件夹，内含按模块分类的 JSON 对照翻译字典。
+- **`convert_to_gbk.ps1`**：仅供维护者使用的 Windows 批处理文件编码转换脚本。它会将预先准备好的 UTF-8 临时源文件转换为 GBK 编码的 `.bat` 成品；普通安装或卸载时无需运行。
 
 ---
 
@@ -59,8 +62,8 @@
 
 * **方法 B：通过 Git 命令行克隆（开发者推荐 💻）**
   ```bash
-  git clone https://github.com/qqxpee/antigravity2-cn.git
-  cd antigravity2-cn
+  git clone https://github.com/Lucian-02/antigravity2-win-linux-cn.git
+  cd antigravity2-win-linux-cn
   ```
 
 ---
@@ -187,7 +190,7 @@ node localization_engine.js --brand-title translated
   - **Linux**：确保脚本有执行权限 `chmod +x install.sh uninstall.sh`，或使用 `sudo`。
 
 ### 3）软件官方更新后，汉化失效了怎么办？
-* 软件升级时，官方会覆盖 `app.asar` 文件。您无需担心，直接完全退出软件，重新运行 `./install.sh` 重新注入一次即可完美恢复中文。
+* 软件升级时，官方会覆盖 `app.asar` 文件。您无需担心，完全退出软件后重新注入即可：Windows 双击 `双击安装中文汉化.bat`，Linux 运行 `./install.sh`。
 
 ## 🤝 致谢
 - 感谢原作者 [qqxpee](https://github.com/qqxpee) 开发并开源了本汉化项目：[antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)
