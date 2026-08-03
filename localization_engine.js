@@ -108,9 +108,14 @@ function generateJs() {
     const longEntries = REPLACEMENT_ENTRIES_PLACEHOLDER;
     const translatedValues = new WeakMap();
 
-    // 禁区类名/属性特征
+    // 禁区类名、标签与语义属性特征
     const BLOCKED_CLASSES = ['monaco-editor', 'editor-container', 'terminal', 'output-view', 'debug-console', 'code-view', 'artifact-container', 'suggest-widget'];
     const BLOCKED_TAGS = ['SCRIPT', 'STYLE', 'CODE', 'PRE', 'INPUT', 'TEXTAREA', 'SVG', 'CANVAS', 'SYMBOL', 'PATH'];
+    // Antigravity 2.4.3 会为每条已发送/历史用户消息添加此稳定测试标识。
+    // 排除消息本体，避免 UI 词条与用户原文相同时误译聊天气泡。
+    const BLOCKED_TEST_IDS = new Set(['user-input-step']);
+    // 为后续发现的第三方嵌入区或特殊内容区预留显式的手动禁用开关。
+    const SKIP_TRANSLATION_ATTR = 'data-ag-localization-skip';
 
     function norm(s) {
         if (!s) return '';
@@ -143,6 +148,9 @@ function generateJs() {
         let depth = 0;
         while (curr && depth < 12) { // 向上回溯 12 层
             if (curr.nodeType === Node.ELEMENT_NODE) {
+                if (curr.hasAttribute(SKIP_TRANSLATION_ATTR)) return true;
+                if (BLOCKED_TEST_IDS.has(curr.getAttribute('data-testid'))) return true;
+
                 const tag = curr.tagName.toUpperCase();
                 if (BLOCKED_TAGS.includes(tag)) return true;
                 if (curr.getAttribute('contenteditable') === 'true') return true;
@@ -290,6 +298,20 @@ function generateJs() {
         // 模型名与句号被拆成两个节点时，移除遗留的英文句号，避免显示“。.”。
         if (/^[.。]$/.test(currentText) && /模型运行。$/.test(previousText)) {
             return '';
+        }
+
+        // 删除计划任务确认提示会把“前缀 + 动态任务名 + 问号/撤销说明”拆成多个节点。
+        // 前缀由词典先翻译；这里向前查找该前缀，再仅翻译紧随任务名的英文收尾。
+        if (/^\\?\\s*(?:This action cannot be undone\\.?)?$/i.test(currentText) && previous) {
+            let candidate = previous;
+            for (let i = 0; i < 6 && candidate; i++) {
+                if (norm(candidate.nodeValue) === "您确定要删除计划任务") {
+                    return /This action cannot be undone/i.test(currentText)
+                        ? "吗？此操作无法撤销。"
+                        : "吗？";
+                }
+                candidate = findPreviousTextNode(candidate);
+            }
         }
 
         return null;
@@ -676,6 +698,10 @@ function generateJs() {
                 } else if (/^(.+?): i\\/o timeout$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(.+?): i\\/o timeout$/i, (match, prefix) => {
                         return prefix + ": I/O 超时 (i/o timeout)";
+                    });
+                } else if (/^Are you sure you want to delete the scheduled task (.+?)\\? This action cannot be undone\\.?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Are you sure you want to delete the scheduled task (.+?)\\? This action cannot be undone\\.?$/i, (match, name) => {
+                        return "您确定要删除计划任务 " + name + " 吗？此操作无法撤销。";
                     });
                 } else if (/^Are you sure you want to delete (the |this )?project (.+?)\\??$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Are you sure you want to delete (the |this )?project (.+?)\\??$/i, (match, article, name) => {
