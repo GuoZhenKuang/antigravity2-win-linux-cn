@@ -215,6 +215,11 @@ function generateJs() {
         const geminiAvailableMatch = normalized.match(/^Gemini\\s+(.+?)\\s+is now available$/i);
         if (geminiAvailableMatch) return "Gemini " + geminiAvailableMatch[1] + " 现已可用";
 
+        // React 有时会把 "Explored " 与 "2 pages" 拆成相邻节点。
+        // 此处保留计数的动态匹配，避免为每个数字增加词典项。
+        const exploredPagesMatch = normalized.match(/^Explored\\s+(\\d+)\\s+pages?(\\s*[>v›])?$/i);
+        if (exploredPagesMatch) return "探索了 " + exploredPagesMatch[1] + " 个页面" + (exploredPagesMatch[2] || "");
+
         const toolMatch = normalized.match(/^(\\d+)\\s+tools?\\s+enabled$/i);
         if (toolMatch) return toolMatch[1] + " 个工具已启用";
 
@@ -454,6 +459,8 @@ function generateJs() {
                     newVal = map.get(valNorm);
                 } else if (/^Gemini\\s+(.+?)\\s+is now available$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Gemini\\s+(.+?)\\s+is now available$/i, (m, model) => "Gemini " + model + " 现已可用");
+                } else if (/^Explored\\s+(\\d+)\\s+pages?(\\s*[>v›])?\\s*$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Explored\\s+(\\d+)\\s+pages?(\\s*[>v›])?\\s*$/i, (m, np, suffix) => "探索了 " + np + " 个页面" + (suffix || ""));
                 } else if (/^Explored\\s+(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Explored\\s+(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i, (m, nf, nd, np) => "探索了 " + nf + " 个文件、" + nd + " 个文件夹、" + np + " 个页面");
                 } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i.test(valNorm)) {
@@ -468,6 +475,8 @@ function generateJs() {
                     newVal = valNorm.replace(/^(\\d+)\\s+tasks?/, (m, n) => n + " 个任务");
                 } else if (/^(\\d+)\\s+files?(\\s*[>v,])?\\s*$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(\\d+)\\s+files?/, (m, n) => n + " 个文件");
+                } else if (/^(\\d+)\\s+pages?(\\s*[>v,›])?\\s*$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+)\\s+pages?/, (m, n) => n + " 个页面");
                 } else if (/^(\\d+)\\s+search(?:es)?(\\s*[>v,])?\\s*$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(\\d+)\\s+search(?:es)?/, (m, n) => n + " 次搜索");
                 } else if (/^(\\d+)\\s+commands?(\\s*[>v])?\\s*$/i.test(valNorm)) {
@@ -816,10 +825,12 @@ function generateJs() {
                     newVal = newVal.replace(/You have hit your weekly limit, it will fully refresh in (\\d+) minutes?\\./gi, (match, m) => {
                         return "您已达到每周配额限制，将在 " + m + " 分钟后完全刷新。";
                     });
-                    // 步骤节点量词片段翻译（处理 Explored N search / file 等拆分文本节点）
+                    // 步骤节点量词片段翻译（处理 Explored N search / file / page 等拆分文本节点）
                     newVal = newVal.replace(/^(\\d+)\\s+searches?\\s*>?\\s*$/i, (m, n) => n + " 次搜索");
                     newVal = newVal.replace(/^searches?\\s*>?\\s*$/i, () => "次搜索");
                     newVal = newVal.replace(/^files?\\s*>?\\s*$/i, () => "个文件");
+                    newVal = newVal.replace(/^(\\d+)\\s+pages?(\\s*[>›]?)\\s*$/i, (m, n, suffix) => n + " 个页面" + suffix);
+                    newVal = newVal.replace(/^pages?(\\s*[>›]?)\\s*$/i, (m, suffix) => "个页面" + suffix);
                 }
                 if (newVal !== originalVal) {
                     translatedValues.set(node, newVal);

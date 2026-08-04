@@ -1,8 +1,8 @@
-# Antigravity 2.0 中文汉化引擎 (Windows/Linux)
+# Antigravity v2.5.0 中文汉化引擎 (Windows/Linux)
 
 > **Fork 自**：[qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn) — 感谢原作者 [qqxpee](https://github.com/qqxpee) 的辛勤付出！
 
-> **支持系统**：Windows / Ubuntu / Linux (双平台自动适配，已内置一键脚本)
+> **支持系统**：Windows / Linux（含 Ubuntu 等常见发行版，已内置安装与还原脚本）
 >
 > **语言支持**：仅简体中文 (去除了繁体中文及其他冗余翻译，专注极佳的简中开发体验)
 >
@@ -10,7 +10,7 @@
 >
 > **最近更新**：2026-08-04
 >
-> **核心引擎**：Node.js (无需安装 Python，零依赖，极速极稳)
+> **核心运行环境**：Node.js 与 npm（无需 Python、无需安装项目依赖；首次运行会由 `npx` 获取 `@electron/asar`）
 >
 > **汉化范围**：已覆盖 Antigravity v2.5.0 约 99% 的可见界面文案，包括主界面、顶部系统菜单与任务栏菜单、加载页、设置面板、新手引导与登录流程、对话及计划任务管理、MCP 服务器列表，以及各类动态状态、提示和操作反馈。少量内容可能因客户端异步渲染、第三方嵌入或官方后续新增界面而暂未覆盖。
 >
@@ -46,7 +46,9 @@
 - **`install.sh`**：Linux 一键汉化执行入口。
 - **`uninstall.sh`**：Linux 一键完美恢复原版入口。
 - **`localization_engine.js`**：核心汉化逻辑，跨平台自动适配，负责 app.asar 的解包、代码注入和重新打包。
-- **`dicts/`**：汉化字典文件夹，内含按模块分类的 JSON 对照翻译字典。
+- **`dicts/`**：汉化字典文件夹，内含按模块分类的 JSON 对照翻译字典；当前版本的核心词典为 `dicts/v2.5.0.json`。
+- **`AGENTS.md`**：项目通用规则。支持 `AGENTS.md` 的 AI Agent 会将其作为项目上下文，按其中的汉化边界、动态文案处理与验证要求工作。
+- **`.gitattributes`**：Git 属性规则。它会保护 Windows `.bat` 文件的 GBK/CRLF 字节内容，避免 Git 的自动文本转换破坏安装或卸载脚本，请保留此文件。
 - **`convert_to_gbk.ps1`**：仅供维护者使用的 Windows 批处理文件编码转换脚本。它会将预先准备好的 UTF-8 临时源文件转换为 GBK 编码的 `.bat` 成品；普通安装或卸载时无需运行。
 
 ---
@@ -70,44 +72,40 @@
 
 ### 2. 一键安装汉化
 1. **完全退出** Antigravity 编程软件。
-2. 进入解压或克隆出来的 `antigravity2-cn` 文件夹：
-   - **Windows**：双击运行 **`双击安装中文汉化.bat`**。
-   - **Linux**：运行 `chmod +x install.sh && ./install.sh`。
+2. 进入解压或克隆出来的 `antigravity2-win-linux-cn` 文件夹：
+   - **Windows**：右键 **`双击安装中文汉化.bat`**，选择“以管理员身份运行”。
+   - **Linux**：首次使用先赋予脚本执行权限，然后运行安装命令：
+     ```bash
+     chmod +x install.sh uninstall.sh
+     sudo ./install.sh
+     ```
 3. 按提示选择左上角品牌显示方式：
    - **显示英文 Antigravity（默认推荐）**：保留官方品牌名，避免左上角显示过长。
    - **不显示品牌名**：隐藏左上角的品牌文字。
    - **显示中文品牌名**：保持原汉化效果，显示"反重力智能编程"。
 4. 运行完成后，重新启动 Antigravity 软件，即可畅享全中文界面！
 
-### 品牌显示命令行参数
-
-如果您通过命令行运行 `localization_engine.js`，可使用 `--brand-title` 控制左上角品牌名：
-
-```bash
-# 默认推荐：左上角显示 Antigravity
-node localization_engine.js --brand-title english
-
-# 隐藏左上角品牌名
-node localization_engine.js --brand-title hidden
-
-# 显示中文品牌名
-node localization_engine.js --brand-title translated
-```
+> [!TIP]
+> Linux 安装路径会自动识别。若自动识别失败，可在项目根目录手动指定 Antigravity 的安装目录：
+> ```bash
+> sudo ./install.sh --install-dir "/path/to/Antigravity"
+> ```
+> 请使用安装脚本，而不要直接执行 `node localization_engine.js`；安装脚本会提供品牌选项，并在权限不足时显示 `sudo ./install.sh` 的重试提示。
 
 ---
 
 ### 3. 一键卸载还原
 1. **完全退出** Antigravity 编程软件。
 2. 在当前文件夹下：
-   - **Windows**：双击运行 **`双击卸载还原官方英文.bat`**。
-   - **Linux**：运行 `chmod +x uninstall.sh && ./uninstall.sh`。
+   - **Windows**：右键 **`双击卸载还原官方英文.bat`**，选择“以管理员身份运行”。
+   - **Linux**：运行 `sudo ./uninstall.sh`。如自动定位失败，可追加 `--install-dir "/path/to/Antigravity"`。
 3. 运行完成后，软件将自动清除所有汉化注入，无痕恢复至官方原版英文状态。
 
 ---
 
 ## 🛠️ 汉化原理说明
 
-本引擎采用 **ASAR 包注入模式**，专为 **Antigravity 2.0+** 的 Electron 架构量身定制：
+本引擎采用 **ASAR 包注入模式**，适配 **Antigravity v2.5.0** 的 Electron 打包结构：
 1. **自动释放锁**：脚本运行前会自动探测并安全关闭 Antigravity 进程，防止文件占用锁定。
 2. **安全备份**：首次运行时，会在软件目录自动创建原始 `app.asar.bak` 文件，确保随时可无损还原。
 3. **精准注入**：
@@ -120,18 +118,18 @@ node localization_engine.js --brand-title translated
 
 ## 💡 如何通过 AI 助手自动补充或修改汉化？
 
-如果在使用过程中，您发现了漏译的英文，或者觉得某些中文翻译不够接地气，**您可以直接在聊天窗口中命令您的 AI 编码助手（即 Antigravity）来帮您更新词库**！无论是直接发截图还是描述文字，AI 都会自动帮您把对照词条写进词典。
+如果在使用过程中，您发现了漏译的英文，或者觉得某些中文翻译不够接地气，您可以让 AI 编码助手协助更新词库。直接发送截图或文字描述即可；将本仓库作为工作区打开时，支持 `AGENTS.md` 的 Agent 会先读取项目中的汉化规则。
 
 > [!IMPORTANT]
 > **⚠️ AI 助手如何定位您的汉化词库文件？**
 >
 > 1. **推荐做法（最省心）**：
->    在 Antigravity 软件中，点击 **"打开文件夹 (Open Folder)"**，直接将本汉化包目录（即包含当前 `README.md` 的文件夹）作为**项目/工作区**打开，然后在此工作区下与 AI 对话。此时 AI 能够直接感知并读写当前项目，您不需要提供任何路径，直接发送翻译要求，AI 就能在后台自动帮您改好词典！
+>    在 Antigravity 软件中，点击 **"打开文件夹 (Open Folder)"**，直接将本汉化包目录（即包含当前 `README.md` 和 `AGENTS.md` 的文件夹）作为**项目/工作区**打开，然后在此工作区下与 AI 对话。此时 AI 能够直接定位项目词典与规则；直接发送翻译要求即可。
 >
 > 2. **免开项目做法（提示词中需指定汉化目录）**：
 >    如果您当前正在开发别的项目，没有把汉化目录作为项目打开，那么您在对 AI 发起汉化命令时，**必须在提示词里明确告诉 AI 您的汉化包所在路径**，否则 AI 无法得知要修改您电脑上的哪个文件夹。
 >    * **提示词示例**：
->      > **"我的汉化包目录在 `~/Downloads/antigravity2-cn`（请替换为您本地的实际路径），请帮我把下面这张截图里漏译的内容补全到词典里。"**
+>      > **"我的汉化包目录在 `~/Downloads/antigravity2-win-linux-cn`（请替换为您本地的实际路径），请先阅读 `AGENTS.md`，再帮我把下面这张截图里漏译的内容补全到词典里。"**
 
 ### 📋 常用提示词（Prompt）模板
 
@@ -150,17 +148,21 @@ node localization_engine.js --brand-title translated
 ### 🔄 更新生效流程
 1. **命令 AI 更新**：在对话中通过截图或文字告诉 AI 您的汉化需求，AI 会自动更新 `dicts/` 下的字典文件。
 2. **退出软件**：**完全退出**您的 Antigravity 软件。
-3. **重新注入**：Windows 双击 `双击安装中文汉化.bat`，Linux 运行 `./install.sh`。
+3. **重新注入**：Windows 右键以管理员身份运行 `双击安装中文汉化.bat`；Linux 在项目根目录运行 `sudo ./install.sh`。
 4. **重启软件**：重新打开 Antigravity，您的改动即可完美生效！
 
 ---
 
 ## 📝 词典自定义指南 (供极客手动使用)
 
-如果您想手动修改翻译，可以直接打开 `dicts/` 目录下的 JSON 文件：
-- **`common.json`**：公共基础词汇、侧边栏概览、登录页、常用按钮等。
-- **`page_settings.json`**：包含极其丰富的详细设置面板、权限二级菜单对照。
-- **`menu_nav.json`**：系统及菜单栏翻译。
+如果您想手动修改翻译，可以直接打开 `dicts/` 目录下的 JSON 文件。引擎会加载其中全部 JSON 词典：
+- **`v2.5.0.json`**：Antigravity v2.5.0 的核心版本词典。
+- **`common.json`**：公共基础词汇、侧边栏概览、登录页、常用按钮与权限弹窗等。
+- **`menu_nav.json`**：系统菜单、导航和任务栏菜单。
+- **`page_agents.json`**：Agent、任务与对话相关页面。
+- **`page_mcp_knowledge.json`**：MCP、知识库与相关配置页面。
+- **`page_settings.json`**：详细设置面板和权限二级菜单。
+- **`page_workspaces.json`**：工作区与项目相关页面。
 
 在 JSON 中新增一行，格式如下即可（注意英文逗号）：
 ```json
@@ -174,7 +176,7 @@ node localization_engine.js --brand-title translated
 
 ### 1）提示"解包失败"或缺少 npm 环境
 * **原因**：汉化引擎依赖 Node.js 进行 ASAR 包的解析。
-* **解决**：安装 Node.js（LTS 版本即可）：
+* **解决**：安装 Node.js 与 npm（LTS 版本即可；安装脚本会通过 `npx` 使用 `@electron/asar`）：
   ```bash
   # Ubuntu/Debian
   sudo apt update && sudo apt install -y nodejs npm
@@ -187,10 +189,10 @@ node localization_engine.js --brand-title translated
 ### 2）提示"权限不足"
 * **解决**：
   - **Windows**：右键点击 `.bat` 文件，选择 **"以管理员身份运行"**。
-  - **Linux**：确保脚本有执行权限 `chmod +x install.sh uninstall.sh`，或使用 `sudo`。
+  - **Linux**：在项目根目录首次执行 `chmod +x install.sh uninstall.sh`，然后使用 `sudo ./install.sh`；卸载时使用 `sudo ./uninstall.sh`。安装窗口遇到 `EACCES` 或权限不足时也会显示相同的简短提权命令。
 
 ### 3）软件官方更新后，汉化失效了怎么办？
-* 软件升级时，官方会覆盖 `app.asar` 文件。您无需担心，完全退出软件后重新注入即可：Windows 双击 `双击安装中文汉化.bat`，Linux 运行 `./install.sh`。
+* 软件升级时，官方会覆盖 `app.asar` 文件。您无需担心，完全退出软件后重新注入即可：Windows 右键以管理员身份运行 `双击安装中文汉化.bat`，Linux 在项目根目录运行 `sudo ./install.sh`。
 
 ## 🤝 致谢
 - 感谢原作者 [qqxpee](https://github.com/qqxpee) 开发并开源了本汉化项目：[antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)

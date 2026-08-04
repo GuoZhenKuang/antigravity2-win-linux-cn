@@ -117,6 +117,7 @@
     "Finish": "完成",
     "Allow running this command?": "是否允许运行此命令？",
     "Allow executing actions on this URL?": "是否允许在此 URL 上执行操作？",
+    "Allow using this MCP tool?": "是否允许使用此 MCP 工具？",
     "Yes, allow this time": "是，仅允许本次执行",
     "No": "否",
     "No (tell the agent what to do instead)": "否（告知智能体其他操作）",
