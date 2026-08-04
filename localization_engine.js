@@ -274,6 +274,13 @@ function generateJs() {
             }
         }
 
+        // 权限选项会把“始终允许”和“不在项目中时”拆成相邻节点。
+        // 合并后保持自然语序，并避免残留英文尾句。
+        if (/^when not in a project$/i.test(currentText) && previousText === "是，且始终允许") {
+            replaceTextNode(previous, "是，且在不属于任何项目时始终允许");
+            return '';
+        }
+
         // “29 tool” + “s enabled” 这类分割：直接在前一节点完成整句翻译。
         if (/^s\\s+enabled$/i.test(currentText) && previous) {
             const countAndTool = previousText.match(/^(\\d+)\\s+tools?$/i);
