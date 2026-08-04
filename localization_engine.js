@@ -111,7 +111,7 @@ function generateJs() {
     // 禁区类名、标签与语义属性特征
     const BLOCKED_CLASSES = ['monaco-editor', 'editor-container', 'terminal', 'output-view', 'debug-console', 'code-view', 'artifact-container', 'suggest-widget'];
     const BLOCKED_TAGS = ['SCRIPT', 'STYLE', 'CODE', 'PRE', 'INPUT', 'TEXTAREA', 'SVG', 'CANVAS', 'SYMBOL', 'PATH'];
-    // Antigravity 2.4.3 会为每条已发送/历史用户消息添加此稳定测试标识。
+    // Antigravity 2.5.0 会为每条已发送/历史用户消息添加此稳定测试标识。
     // 排除消息本体，避免 UI 词条与用户原文相同时误译聊天气泡。
     const BLOCKED_TEST_IDS = new Set(['user-input-step']);
     // 为后续发现的第三方嵌入区或特殊内容区预留显式的手动禁用开关。
@@ -209,6 +209,12 @@ function generateJs() {
         if (map.has(normalized)) return map.get(normalized);
         if (lowerMap.has(normalized.toLowerCase())) return lowerMap.get(normalized.toLowerCase());
 
+        const showMoreMatch = normalized.match(/^Show\\s+(\\d+)\\s+more(?:\\.\\.\\.|…)?$/i);
+        if (showMoreMatch) return "显示另外 " + showMoreMatch[1] + " 个...";
+
+        const geminiAvailableMatch = normalized.match(/^Gemini\\s+(.+?)\\s+is now available$/i);
+        if (geminiAvailableMatch) return "Gemini " + geminiAvailableMatch[1] + " 现已可用";
+
         const toolMatch = normalized.match(/^(\\d+)\\s+tools?\\s+enabled$/i);
         if (toolMatch) return toolMatch[1] + " 个工具已启用";
 
@@ -256,6 +262,17 @@ function generateJs() {
         const currentText = norm(originalVal);
         const previous = findPreviousTextNode(node);
         const previousText = previous ? norm(previous.nodeValue) : '';
+
+        // “No ” + “Projects” + “ found” 会由词典先将 Projects 翻成“项目列表”。
+        // 在处理收尾节点时合并为完整中文短句，避免保留两侧英文碎片。
+        if (/^found$/i.test(currentText) && previousText === "项目列表") {
+            const noNode = findPreviousTextNode(previous);
+            if (noNode && /^No$/i.test(norm(noNode.nodeValue))) {
+                replaceTextNode(noNode, '');
+                replaceTextNode(previous, "未找到项目列表");
+                return '';
+            }
+        }
 
         // “29 tool” + “s enabled” 这类分割：直接在前一节点完成整句翻译。
         if (/^s\\s+enabled$/i.test(currentText) && previous) {
@@ -428,8 +445,16 @@ function generateJs() {
                     newVal = shortcutTrans;
                 } else if (map.has(valNorm)) {
                     newVal = map.get(valNorm);
+                } else if (/^Gemini\\s+(.+?)\\s+is now available$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Gemini\\s+(.+?)\\s+is now available$/i, (m, model) => "Gemini " + model + " 现已可用");
+                } else if (/^Explored\\s+(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Explored\\s+(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i, (m, nf, nd, np) => "探索了 " + nf + " 个文件、" + nd + " 个文件夹、" + np + " 个页面");
+                } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i, (m, nf, nd, np) => nf + " 个文件、" + nd + " 个文件夹、" + np + " 个页面");
                 } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+search(?:es)?(\\s*[>v])?\\s*$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(\\d+)\\s+files?,\\s*(\\d+)\\s+search(?:es)?(\\s*[>v])?\\s*$/i, (m, nf, ns) => nf + " 个文件，" + ns + " 次搜索");
+                } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+)\\s+files?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i, (m, nf, np) => nf + " 个文件，" + np + " 个页面");
                 } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+tasks?(\\s*[>v])?\\s*$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(\\d+)\\s+files?,\\s*(\\d+)\\s+tasks?(\\s*[>v])?\\s*$/i, (m, nf, nt) => nf + " 个文件，" + nt + " 个任务");
                 } else if (/^(\\d+)\\s+tasks?(\\s*[>v,])?\\s*$/i.test(valNorm)) {
@@ -710,6 +735,10 @@ function generateJs() {
                 } else if (/^Permanently delete (.+?) including (\\d+) active conversations? and (\\d+) archived conversations?\\.?$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Permanently delete (.+?) including (\\d+) active conversations? and (\\d+) archived conversations?\\.?$/i, (match, name, active, archived) => {
                         return "永久删除 " + name + "，包含 " + active + " 个活跃对话及 " + archived + " 个已归档对话。";
+                    });
+                } else if (/^This will permanently delete (.+?) including (\\d+) active conversations? and (\\d+) archived conversations?(?:\\. This action cannot be undone\\.)?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^This will permanently delete (.+?) including (\\d+) active conversations? and (\\d+) archived conversations?(?:\\. This action cannot be undone\\.)?$/i, (match, name, active, archived) => {
+                        return "这将永久删除 " + name + "，包含 " + active + " 个活跃对话及 " + archived + " 个已归档对话。此操作无法撤销。";
                     });
                 } else {
                     // 2. 长句子串滑动替换
@@ -1065,6 +1094,35 @@ function runCommandSync(cmd) {
     }
 }
 
+function reportWritePermissionError(resourcesDir, error, action, entryScript = 'install.sh') {
+    const detail = error && (error.code || error.message);
+    console.error(`\n[权限不足] 无法${action} Antigravity 安装目录: ${resourcesDir}`);
+    if (detail) console.error(`[详情] ${detail}`);
+
+    if (process.platform === 'win32') {
+        console.error("[提示] 请右键安装脚本并选择“以管理员身份运行”，然后重试。");
+    } else {
+        console.error("[提示] 此安装位于系统目录，需要管理员权限。请完全退出客户端后，在汉化包目录运行：");
+        console.error(`  sudo ./${entryScript}`);
+    }
+}
+
+function canWriteAntigravityResources(resourcesDir, entryScript) {
+    const asarPath = path.join(resourcesDir, "app.asar");
+    // app.asar 缺失由后续安装逻辑报告为“未找到文件”，避免误报为权限问题。
+    if (!fs.existsSync(asarPath)) return true;
+
+    try {
+        // 安装需要创建 app.asar.bak，重打包时需要覆盖 app.asar；两项权限缺一不可。
+        fs.accessSync(resourcesDir, fs.constants.W_OK | fs.constants.X_OK);
+        fs.accessSync(asarPath, fs.constants.R_OK | fs.constants.W_OK);
+        return true;
+    } catch (e) {
+        reportWritePermissionError(resourcesDir, e, '写入', entryScript);
+        return false;
+    }
+}
+
 
 // ==========================================
 // Antigravity 2.0 汉化引擎 (ASAR打包注入模式)
@@ -1081,7 +1139,16 @@ function install20(resourcesDir) {
     // 1. 备份
     if (!fs.existsSync(bakPath)) {
         console.log(`[备份] 正在创建官方原始包备份: app.asar.bak ...`);
-        fs.copyFileSync(asarPath, bakPath);
+        try {
+            fs.copyFileSync(asarPath, bakPath);
+        } catch (e) {
+            if (e.code === 'EACCES' || e.code === 'EPERM' || e.code === 'EROFS') {
+                reportWritePermissionError(resourcesDir, e, '备份到');
+            } else {
+                console.error(`[错误] 创建 app.asar.bak 备份失败: ${e.message}`);
+            }
+            return false;
+        }
         console.log(`[备份] 备份成功！`);
     } else {
         // 尝试用官方备份覆盖当前 app.asar，以确保每次汉化都基于最干净的官方英文包
@@ -1089,6 +1156,10 @@ function install20(resourcesDir) {
             fs.copyFileSync(bakPath, asarPath);
             console.log(`[还原] 已重置当前 app.asar 为官方原始备份包，以进行全新注入...`);
         } catch (e) {
+            if (e.code === 'EACCES' || e.code === 'EPERM' || e.code === 'EROFS') {
+                reportWritePermissionError(resourcesDir, e, '写入');
+                return false;
+            }
             console.log(`[提示] 当前 app.asar 被锁定（可能是客户端正在运行），将使用当前包进行增量注入。`);
         }
     }
@@ -1330,15 +1401,7 @@ function main() {
     // 1. 探测路径
     const installDir = detectInstallationDir(manualDir);
 
-    // 2. 检测客户端是否正在运行，并根据参数决定是否关闭以解除文件锁定
-    wasAppRunning = checkIfAppIsRunning();
-    if (noKill) {
-        console.log("[跳过] 检测到 --no-kill 参数，跳过关闭 Antigravity 运行进程。");
-    } else {
-        closeAntigravityProcesses();
-    }
-
-    // 3. 找到 resources 资源目录
+    // 2. 找到 resources 资源目录
     let resourcesDir = "";
     if (fs.existsSync(path.join(installDir, "resources"))) {
         resourcesDir = path.join(installDir, "resources");
@@ -1357,7 +1420,20 @@ function main() {
         process.exit(1);
     }
 
-    // 4. 执行汉化或还原
+    // 3. 在关闭客户端前先检查权限，避免失败时无谓关闭用户正在使用的客户端。
+    if (!canWriteAntigravityResources(resourcesDir, huifu ? 'uninstall.sh' : 'install.sh')) {
+        process.exit(1);
+    }
+
+    // 4. 检测客户端是否正在运行，并根据参数决定是否关闭以解除文件锁定
+    wasAppRunning = checkIfAppIsRunning();
+    if (noKill) {
+        console.log("[跳过] 检测到 --no-kill 参数，跳过关闭 Antigravity 运行进程。");
+    } else {
+        closeAntigravityProcesses();
+    }
+
+    // 5. 执行汉化或还原
     let success = false;
     if (huifu) {
         console.log("====== 正在卸载中文汉化，恢复官方原版 ======");
@@ -1371,7 +1447,7 @@ function main() {
         process.exit(1);
     }
 
-    // 5. 校验通过且原来客户端在运行，则自动重新启动客户端
+    // 6. 校验通过且原来客户端在运行，则自动重新启动客户端
     if (success && wasAppRunning) {
         console.log("\n[启动] 检测到安装前反重力客户端处于开启状态，正在重新启动客户端...");
         try {

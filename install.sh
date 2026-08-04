@@ -26,11 +26,15 @@ esac
 
 echo ""
 echo "[1/2] 正在注入汉化代码..."
-node "$SCRIPT_DIR/localization_engine.js" $BRAND_ARG "$@"
-
-if [ $? -ne 0 ]; then
+if ! node "$SCRIPT_DIR/localization_engine.js" $BRAND_ARG "$@"; then
     echo ""
     echo "[错误] 注入失败，请检查上方错误信息。"
+    echo "提示：如果上方显示“权限不足”或 “EACCES”，请使用 sudo 重新运行此脚本。"
+    echo "示例：sudo ./install.sh"
+    # 从文件管理器双击启动时，给用户时间阅读上方的权限提示；管道和 CI 不等待输入。
+    if [ -t 0 ]; then
+        read -rp "按 Enter 键退出..." _
+    fi
     exit 1
 fi
 
