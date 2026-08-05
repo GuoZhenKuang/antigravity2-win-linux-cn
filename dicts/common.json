@@ -268,8 +268,8 @@
     "including": "包含",
     "active conversation": "个活跃对话",
     "active conversations": "个活跃对话",
-    "archived conversation": "个已归档对话",
-    "archived conversations": "个已归档对话",
+    "archived conversation": "已归档对话",
+    "archived conversations": "已归档对话",
     "There are no customizations enabled.": "未启用任何个性化定制。",
     "There are no customizations enabled": "未启用任何个性化定制",
     "No customizations enabled": "未启用个性化定制",
@@ -300,5 +300,7 @@
     " file": " 个文件",
     " files": " 个文件",
     "Ran ": "运行了 ",
-    "Failed to stop agent": "停止智能体失败"
+    "Failed to stop agent": "停止智能体失败",
+    "This chat is archived.": "此对话已归档。",
+    "Mark Read": "标为已读"
 }

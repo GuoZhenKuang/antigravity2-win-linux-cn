@@ -204,12 +204,12 @@ function generateJs() {
     function translateExploredStatus(str) {
         if (!str || typeof str !== 'string') return null;
         const trimmed = str.trim();
-        const match = trimmed.match(/^(Explored|探索了)?\s*(.+?)(\s*[>v›])?\s*$/i);
+        const match = trimmed.match(/^(Explored|探索了)?\s*(.+?)(\s*[>v›∨˅⌄▼▽⋁\u2228\u02c5\u2304\u25bc\u25bd\u276f\u2193])?\s*$/i);
         if (!match) return null;
 
         const hasPrefix = !!match[1];
         const itemsPart = match[2].trim();
-        const suffixMatch = trimmed.match(/(\s*[>v›])\s*$/);
+        const suffixMatch = trimmed.match(/(\s*[>v›∨˅⌄▼▽⋁\u2228\u02c5\u2304\u25bc\u25bd\u276f\u2193])\s*$/);
         const suffix = suffixMatch ? suffixMatch[1] : "";
 
         const items = itemsPart.split(/\s*,\s*/);
@@ -263,6 +263,18 @@ function generateJs() {
             const model = scheduleMatch[1].replace(/[.。]+$/, '').trim();
             if (model) return "所有计划任务均以 " + model + " 模型运行。";
         }
+        const viewArchivedMatch = normalized.match(/^View(?:\s+(\d+))?\s+archived conversations?(?:\s+in)?$/i);
+        if (viewArchivedMatch) {
+            const hasIn = /in$/i.test(normalized);
+            const numStr = viewArchivedMatch[1] ? " " + viewArchivedMatch[1] + " " : " ";
+            return "查看" + numStr + "个已归档对话" + (hasIn ? "，请前往 " : "");
+        }
+        const viewArchivedHistMatch = normalized.match(/^View(?:\s+(\d+))?\s+archived conversations?\s+in\s+History\.?$/i);
+        if (viewArchivedHistMatch) {
+            const numStr = viewArchivedHistMatch[1] ? " " + viewArchivedHistMatch[1] + " " : " ";
+            return "在历史记录中查看" + numStr + "个已归档对话。";
+        }
+
         return null;
     }
 
@@ -375,6 +387,22 @@ function generateJs() {
                         : "吗？";
                 }
                 candidate = findPreviousTextNode(candidate);
+            }
+        }
+
+        if (/^in$/i.test(currentText) && (previousText === "个已归档对话" || previousText === "archived conversation" || previousText === "archived conversations")) {
+            let viewNode = findPreviousTextNode(previous);
+            let hasNumber = false;
+            if (viewNode && /^\d+$/.test(norm(viewNode.nodeValue))) {
+                hasNumber = true;
+                viewNode = findPreviousTextNode(viewNode);
+            }
+            if (viewNode && /^View$/i.test(norm(viewNode.nodeValue))) {
+                replaceTextNode(viewNode, "查看");
+                if (!hasNumber) {
+                    replaceTextNode(previous, " 个已归档对话");
+                }
+                return "，请前往 ";
             }
         }
 
