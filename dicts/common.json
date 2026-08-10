@@ -98,7 +98,6 @@
     "Security Notice & Data Use": "安全告示与数据使用",
     "AI coding agents are known to have certain security limitations. Users should be aware of potential risks, including data exfiltration and possible code execution. Avoid processing highly sensitive data and verify all the actions taken by the agent.": "已知的 AI 编程智能体存在某些安全局限。用户应当意识到潜在的风险，包括数据外泄和可能的代码执行。请避免处理高度敏感的数据，并验证智能体所采取的所有操作。",
     "Yes, I agree to help improve ": "是的，我同意协助改进 ",
-    "Yes, I agree to help improve": "是的，我同意协助改进",
     "by allowing Google to collect and use my Interactions data, subject to the": "，允许 Google 收集并使用我的交互数据，并遵守",
     " by allowing Google to collect and use my Interactions data, subject to the Google ": "，允许 Google 收集并使用我的交互数据，并遵守 Google ",
     "by allowing Google to collect and use my Interactions data, subject to the Google": "，允许 Google 收集并使用我的交互数据，并遵守 Google ",
@@ -107,7 +106,6 @@
     "I understand I can choose to opt out later whenever I want via my settings.": "。我理解我随时可以根据需要通过设置选择退出。",
     "and": "以及",
     "Welcome to ": "欢迎使用 ",
-    "Welcome to": "欢迎使用",
     "Success, Continuing...": "登录成功，正在跳转...",
     "Use Google Cloud project instead": "改用 Google Cloud 项目",
     "Awaiting Authentication...": "正在等待身份验证...",
@@ -302,5 +300,7 @@
     "Ran ": "运行了 ",
     "Failed to stop agent": "停止智能体失败",
     "This chat is archived.": "此对话已归档。",
-    "Mark Read": "标为已读"
+    "View an archived conversation in History.": "可在“历史记录”中查看已归档的对话。",
+    "History.": "历史记录",
+    "Mark Read": "标记为已读"
 }

@@ -65,20 +65,19 @@ function loadDictionary() {
     const totalMap = {};
     const dictsDir = path.join(__dirname, DICTS_FOLDER);
     if (fs.existsSync(dictsDir)) {
-        const files = fs.readdirSync(dictsDir);
+        // 固定加载顺序，避免相同规范化键因文件系统枚举顺序不同而产生不稳定译文。
+        const files = fs.readdirSync(dictsDir).filter(file => file.endsWith('.json')).sort();
         for (const file of files) {
-            if (file.endsWith('.json')) {
-                try {
-                    const filePath = path.join(dictsDir, file);
-                    const fileContent = fs.readFileSync(filePath, 'utf-8');
-                    const data = JSON.parse(fileContent);
-                    for (const [k, v] of Object.entries(data)) {
-                        const normK = normalizeText(k);
-                        if (normK) totalMap[normK] = v;
-                    }
-                } catch (e) {
-                    // ignore
+            try {
+                const filePath = path.join(dictsDir, file);
+                const fileContent = fs.readFileSync(filePath, 'utf-8');
+                const data = JSON.parse(fileContent);
+                for (const [k, v] of Object.entries(data)) {
+                    const normK = normalizeText(k);
+                    if (normK) totalMap[normK] = v;
                 }
+            } catch (e) {
+                // ignore
             }
         }
     }
@@ -111,7 +110,7 @@ function generateJs() {
     // 禁区类名、标签与语义属性特征
     const BLOCKED_CLASSES = ['monaco-editor', 'editor-container', 'terminal', 'output-view', 'debug-console', 'code-view', 'artifact-container', 'suggest-widget'];
     const BLOCKED_TAGS = ['SCRIPT', 'STYLE', 'CODE', 'PRE', 'INPUT', 'TEXTAREA', 'SVG', 'CANVAS', 'SYMBOL', 'PATH'];
-    // Antigravity 2.5.0 会为每条已发送/历史用户消息添加此稳定测试标识。
+    // Antigravity 2.6.0 会为每条已发送/历史用户消息添加此稳定测试标识。
     // 排除消息本体，避免 UI 词条与用户原文相同时误译聊天气泡。
     const BLOCKED_TEST_IDS = new Set(['user-input-step']);
     // 为后续发现的第三方嵌入区或特殊内容区预留显式的手动禁用开关。
@@ -145,8 +144,7 @@ function generateJs() {
     // 核心隔离判断：回溯检查当前节点是否逻辑上属于“禁止汉化区”
     function isInBlockedZone(node) {
         let curr = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-        let depth = 0;
-        while (curr && depth < 12) { // 向上回溯 12 层
+        while (curr) {
             if (curr.nodeType === Node.ELEMENT_NODE) {
                 if (curr.hasAttribute(SKIP_TRANSLATION_ATTR)) return true;
                 if (BLOCKED_TEST_IDS.has(curr.getAttribute('data-testid'))) return true;
@@ -161,7 +159,6 @@ function generateJs() {
                 }
             }
             curr = curr.parentElement || (curr.parentNode && curr.parentNode.host); // 支持 Shadow DOM 穿透
-            depth++;
         }
         return false;
     }
@@ -201,41 +198,101 @@ function generateJs() {
         node.nodeValue = value;
     }
 
+    const EXPLORED_STATUS_SUFFIX = '[>v›∨˅⌄▼▽⋁\\u2228\\u02c5\\u2304\\u25bc\\u25bd\\u276f\\u2193]';
+
+    function getExploredStatusUnit(type) {
+        const normalizedType = String(type || '').toLowerCase();
+        if (/^files?$/.test(normalizedType)) return "个文件";
+        if (/^folders?$/.test(normalizedType)) return "个文件夹";
+        if (/^pages?$/.test(normalizedType)) return "个页面";
+        if (/^search(?:es)?$/.test(normalizedType)) return "次搜索";
+        if (/^tasks?$/.test(normalizedType)) return "个任务";
+        if (/^commands?$/.test(normalizedType)) return "条命令";
+        if (/^tools?$/.test(normalizedType)) return "个工具";
+        if (/^rules?$/.test(normalizedType)) return "条规则";
+        if (/^repos(?:itories)?$/.test(normalizedType)) return "个仓库";
+        return null;
+    }
+
+    // 状态项允许随数量、单复数和末尾展开箭头变化；只接受完整状态或完整计数片段，
+    // 避免把一般页面内容误判为步骤状态。
     function translateExploredStatus(str) {
         if (!str || typeof str !== 'string') return null;
         const trimmed = str.trim();
-        const match = trimmed.match(/^(Explored|探索了)?\s*(.+?)(\s*[>v›∨˅⌄▼▽⋁\u2228\u02c5\u2304\u25bc\u25bd\u276f\u2193])?\s*$/i);
+        const match = trimmed.match(new RegExp('^(?:(Explored)\\\\s+)?(.+?)(\\\\s*' + EXPLORED_STATUS_SUFFIX + ')?\\\\s*$', 'i'));
         if (!match) return null;
 
-        const hasPrefix = !!match[1];
-        const itemsPart = match[2].trim();
-        const suffixMatch = trimmed.match(/(\s*[>v›∨˅⌄▼▽⋁\u2228\u02c5\u2304\u25bc\u25bd\u276f\u2193])\s*$/);
-        const suffix = suffixMatch ? suffixMatch[1] : "";
-
-        const items = itemsPart.split(/\s*,\s*/);
+        const items = match[2].trim().split(/\\s*,\\s*/);
         const translatedItems = [];
-
         for (const item of items) {
-            const itemMatch = item.trim().match(/^(\d+)\s+(files?|folders?|pages?|search(?:es)?|tasks?|commands?|tools?|rules?|repos(?:itories)?)$/i);
+            const itemMatch = item.trim().match(/^(\\d+)\\s+(files?|folders?|pages?|search(?:es)?|tasks?|commands?|tools?|rules?|repos(?:itories)?)$/i);
             if (!itemMatch) return null;
-            const num = itemMatch[1];
-            const type = itemMatch[2].toLowerCase();
-            let unit = "个文件";
-            if (type.startsWith('folder')) unit = "个文件夹";
-            else if (type.startsWith('page')) unit = "个页面";
-            else if (type.startsWith('search')) unit = "次搜索";
-            else if (type.startsWith('task')) unit = "个任务";
-            else if (type.startsWith('command')) unit = "条命令";
-            else if (type.startsWith('tool')) unit = "个工具";
-            else if (type.startsWith('rule')) unit = "条规则";
-            else if (type.startsWith('repo')) unit = "个仓库";
-
-            translatedItems.push(num + " " + unit);
+            const unit = getExploredStatusUnit(itemMatch[2]);
+            if (!unit) return null;
+            translatedItems.push(itemMatch[1] + " " + unit);
         }
 
-        if (translatedItems.length === 0) return null;
-        const prefix = hasPrefix ? "探索了 " : "";
-        return prefix + translatedItems.join("、") + suffix;
+        return (match[1] ? "探索了 " : "") + translatedItems.join("、") + (match[3] || "");
+    }
+
+    function collectTextNodes(element) {
+        const nodes = [];
+        if (!element || !element.childNodes) return nodes;
+        const visit = current => {
+            if (current.nodeType === Node.TEXT_NODE) {
+                nodes.push(current);
+                return;
+            }
+            if (!current.childNodes) return;
+            for (const child of current.childNodes) visit(child);
+        };
+        visit(element);
+        return nodes;
+    }
+
+    // 归档提示中的“History.”是可点击元素，React 会将它与前后文拆成不同节点。
+    // 实际渲染时，各片段也可能先被词典分别改成中英混合文本。仅在整个容器精确
+    // 符合这句话时重排文本，保留 History 对应的原始元素及其事件行为。
+    function translateArchivedConversationNotice(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        const noticeText = norm(element.textContent);
+        const noticePattern = /^(?:View|视图|查看)\\s*(?:an\\s+archived\\s+conversation|个?\\s*已归档(?:的)?对话)\\s*(?:in|，?请前往)\\s*(?:History|历史记录)[.。]?$/i;
+        if (!noticePattern.test(noticeText)) return false;
+
+        // History 在当前版本中不一定使用 <a>，也可能是 button/span。取第一个
+        // 仅包含该标签文案的后代元素，确保中文后缀插入到可点击元素之外。
+        const historyElement = Array.from(element.querySelectorAll('*')).find(candidate => {
+            return /^(?:History|历史记录)[.。]?$/i.test(norm(candidate.textContent));
+        });
+        if (!historyElement) return false;
+
+        const textNodes = collectTextNodes(element);
+        const prefixNode = textNodes.find(textNode => !historyElement.contains(textNode));
+        const historyTextNodes = collectTextNodes(historyElement);
+        if (!prefixNode || historyTextNodes.length === 0) return false;
+
+        replaceTextNode(prefixNode, "可在");
+        for (const textNode of textNodes) {
+            if (textNode !== prefixNode && !historyElement.contains(textNode)) replaceTextNode(textNode, '');
+        }
+        replaceTextNode(historyTextNodes[0], "历史记录");
+        for (let i = 1; i < historyTextNodes.length; i++) replaceTextNode(historyTextNodes[i], '');
+        historyElement.parentNode.insertBefore(document.createTextNode("中查看已归档的对话。"), historyElement.nextSibling);
+        return true;
+    }
+
+    // 2.6.0 会将 “Show N more...” 拆入多个 span。按容器完整文本匹配，
+    // 保留动态数量，不为截图中的某个固定数字建立词条。
+    function translateShowMoreStatus(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        const match = norm(element.textContent).match(/^Show\\s+(\\d+)\\s+more(?:\\.\\.\\.|…)?$/i);
+        if (!match) return false;
+
+        const textNodes = collectTextNodes(element);
+        if (textNodes.length === 0) return false;
+        replaceTextNode(textNodes[0], "显示另外 " + match[1] + " 个...");
+        for (let i = 1; i < textNodes.length; i++) replaceTextNode(textNodes[i], '');
+        return true;
     }
 
     // React 会把同一段 JSX 文案任意拆成多个相邻 Text 节点。先将同一元素中的
@@ -263,16 +320,16 @@ function generateJs() {
             const model = scheduleMatch[1].replace(/[.。]+$/, '').trim();
             if (model) return "所有计划任务均以 " + model + " 模型运行。";
         }
-        const viewArchivedMatch = normalized.match(/^View(?:\s+(\d+))?\s+archived conversations?(?:\s+in)?$/i);
-        if (viewArchivedMatch) {
-            const hasIn = /in$/i.test(normalized);
-            const numStr = viewArchivedMatch[1] ? " " + viewArchivedMatch[1] + " " : " ";
-            return "查看" + numStr + "个已归档对话" + (hasIn ? "，请前往 " : "");
-        }
         const viewArchivedHistMatch = normalized.match(/^View(?:\s+(\d+))?\s+archived conversations?\s+in\s+History\.?$/i);
         if (viewArchivedHistMatch) {
-            const numStr = viewArchivedHistMatch[1] ? " " + viewArchivedHistMatch[1] + " " : " ";
-            return "在历史记录中查看" + numStr + "个已归档对话。";
+            return viewArchivedHistMatch[1]
+                ? "在“历史记录”中查看 " + viewArchivedHistMatch[1] + " 个已归档对话。"
+                : "可在“历史记录”中查看已归档的对话。";
+        }
+        const viewArchivedMatch = normalized.match(/^View(?:\s+(\d+))?\s+archived conversations?(?:\s+in)?$/i);
+        if (viewArchivedMatch) {
+            const countText = viewArchivedMatch[1] ? " " + viewArchivedMatch[1] + " 个" : "";
+            return "查看" + countText + "已归档对话" + (/in$/i.test(normalized) ? "，请前往 " : "");
         }
 
         return null;
@@ -314,6 +371,21 @@ function generateJs() {
         const currentText = norm(originalVal);
         const previous = findPreviousTextNode(node);
         const previousText = previous ? norm(previous.nodeValue) : '';
+
+        // 步骤状态可拆为“Explored ”+“1”+“ folder”。除完整状态外，也只处理
+        // 带有计数的精确资源片段，并保留逗号或展开箭头等独立 UI 元素。
+        const statusItemMatch = currentText.match(new RegExp('^(files?|folders?|pages?|search(?:es)?|tasks?|commands?|tools?|rules?|repos(?:itories)?)(\\\\s*,\\\\s*|\\\\s*' + EXPLORED_STATUS_SUFFIX + ')?$', 'i'));
+        if (statusItemMatch && previous) {
+            const unit = getExploredStatusUnit(statusItemMatch[1]);
+            const tail = statusItemMatch[2] || '';
+            const translatedTail = /,/.test(tail) ? '、' : tail;
+            const prefixedCount = previousText.match(/^(?:Explored|探索了)\\s+(\\d+)$/i);
+            if (prefixedCount) {
+                replaceTextNode(previous, "探索了 " + prefixedCount[1]);
+                return " " + unit + translatedTail;
+            }
+            if (/^\\d+$/.test(previousText)) return " " + unit + translatedTail;
+        }
 
         // “No ” + “Projects” + “ found” 会由词典先将 Projects 翻成“项目列表”。
         // 在处理收尾节点时合并为完整中文短句，避免保留两侧英文碎片。
@@ -390,17 +462,21 @@ function generateJs() {
             }
         }
 
-        if (/^in$/i.test(currentText) && (previousText === "个已归档对话" || previousText === "archived conversation" || previousText === "archived conversations")) {
+        if (/^in$/i.test(currentText) && (previousText === "个已归档对话" || previousText === "已归档对话" || previousText === "archived conversation" || previousText === "archived conversations")) {
             let viewNode = findPreviousTextNode(previous);
             let hasNumber = false;
             if (viewNode && /^\d+$/.test(norm(viewNode.nodeValue))) {
                 hasNumber = true;
                 viewNode = findPreviousTextNode(viewNode);
             }
+            while (viewNode && /^(?:a|an|个)$/i.test(norm(viewNode.nodeValue))) {
+                replaceTextNode(viewNode, '');
+                viewNode = findPreviousTextNode(viewNode);
+            }
             if (viewNode && /^View$/i.test(norm(viewNode.nodeValue))) {
                 replaceTextNode(viewNode, "查看");
                 if (!hasNumber) {
-                    replaceTextNode(previous, " 个已归档对话");
+                    replaceTextNode(previous, "已归档的对话");
                 }
                 return "，请前往 ";
             }
@@ -412,7 +488,14 @@ function generateJs() {
     function translateNode(node) {
         try {
             if (!node) return;
-            
+
+            // ShadowRoot 是 DocumentFragment；显式遍历它，确保已挂载的开放 Shadow DOM
+            // 与常规 DOM 使用同一套安全检查与词典规则。
+            if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+                for (const child of node.childNodes) translateNode(child);
+                return;
+            }
+
             if (node.nodeType === Node.ELEMENT_NODE) {
                 const tag = node.tagName.toUpperCase();
                 
@@ -463,6 +546,8 @@ function generateJs() {
                 
                 // 2. 只有当确实不在禁区时，才翻译其属性
                 if (!isInBlockedZone(node)) {
+                    translateArchivedConversationNotice(node);
+                    translateShowMoreStatus(node);
                     translateCombinedTextChildren(node);
                     for (const attr of ['placeholder', 'title', 'aria-label']) {
                         const v = node.getAttribute(attr);
@@ -503,6 +588,8 @@ function generateJs() {
                 if (isInBlockedZone(node)) return;
 
                 // 文案可能在当前节点刚插入时才拼接完整，需从父元素重新检查整段。
+                if (translateArchivedConversationNotice(node.parentElement)) return;
+                if (translateShowMoreStatus(node.parentElement)) return;
                 if (translateCombinedTextChildren(node.parentElement)) return;
 
                 if (translatedValues.get(node) === originalVal) return;
@@ -525,36 +612,6 @@ function generateJs() {
                     newVal = map.get(valNorm);
                 } else if (/^Gemini\\s+(.+?)\\s+is now available$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Gemini\\s+(.+?)\\s+is now available$/i, (m, model) => "Gemini " + model + " 现已可用");
-                } else if (/^Explored\\s+(\\d+)\\s+pages?(\\s*[>v›])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Explored\\s+(\\d+)\\s+pages?(\\s*[>v›])?\\s*$/i, (m, np, suffix) => "探索了 " + np + " 个页面" + (suffix || ""));
-                } else if (/^Explored\\s+(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Explored\\s+(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i, (m, nf, nd, np) => "探索了 " + nf + " 个文件、" + nd + " 个文件夹、" + np + " 个页面");
-                } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)\\s+files?,\\s*(\\d+)\\s+folders?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i, (m, nf, nd, np) => nf + " 个文件、" + nd + " 个文件夹、" + np + " 个页面");
-                } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+search(?:es)?(\\s*[>v])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)\\s+files?,\\s*(\\d+)\\s+search(?:es)?(\\s*[>v])?\\s*$/i, (m, nf, ns) => nf + " 个文件，" + ns + " 次搜索");
-                } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)\\s+files?,\\s*(\\d+)\\s+pages?(\\s*[>v])?\\s*$/i, (m, nf, np) => nf + " 个文件，" + np + " 个页面");
-                } else if (/^(\\d+)\\s+files?,\\s*(\\d+)\\s+tasks?(\\s*[>v])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)\\s+files?,\\s*(\\d+)\\s+tasks?(\\s*[>v])?\\s*$/i, (m, nf, nt) => nf + " 个文件，" + nt + " 个任务");
-                } else if (/^(\\d+)\\s+tasks?(\\s*[>v,])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)\\s+tasks?/, (m, n) => n + " 个任务");
-                } else if (/^(\\d+)\\s+files?(\\s*[>v,])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)\\s+files?/, (m, n) => n + " 个文件");
-                } else if (/^(\\d+)\\s+pages?(\\s*[>v,›])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)\\s+pages?/, (m, n) => n + " 个页面");
-                } else if (/^(\\d+)\\s+search(?:es)?(\\s*[>v,])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)\\s+search(?:es)?/, (m, n) => n + " 次搜索");
-                } else if (/^(\\d+)\\s+commands?(\\s*[>v])?\\s*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)\\s+commands?/, (m, n) => n + " 条命令");
-                } else if (/^\\s+search(?:es)?(\\s*>)?\\s*$/i.test(originalVal)) {
-                    newVal = "次搜索";
-                } else if (/^\\s+tasks?(\\s*>)?\\s*$/i.test(originalVal)) {
-                    newVal = "个任务";
-                } else if (/^\\s+files?(\\s*>)?\\s*$/i.test(originalVal)) {
-                    newVal = "个文件";
-                } else if (/^\\s+commands?(\\s*>)?\\s*$/i.test(originalVal)) {
-                    newVal = "条命令";
                 } else if (lowerMap.has(valLower)) {
                     newVal = lowerMap.get(valLower);
                 } else if (/^Refreshes in (\\d+) days?, (\\d+) hours?$/i.test(valNorm)) {
@@ -668,10 +725,6 @@ function generateJs() {
                         if (unit.toLowerCase() === 'ms') unitStr = "毫秒";
                         else if (unit.toLowerCase() === 'm' || unit.toLowerCase() === 'min') unitStr = "分钟";
                         return "工作了 " + val + " " + unitStr;
-                    });
-                } else if (/^Explored (\\d+) search(?:es)?(?:\\s*>)?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Explored (\\d+) search(?:es)?(?:\\s*>)?$/i, (match, val) => {
-                        return "探索了 " + val + " 次搜索";
                     });
                 } else if (/^You have hit your 5-hour limit, it will refresh in (\\d+) days?\\. If on a supported paid plan, you can use AI credits in the interim\\.$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^You have hit your 5-hour limit, it will refresh in (\\d+) days?\\. If on a supported paid plan, you can use AI credits in the interim\\.$/i, (match, d) => {
