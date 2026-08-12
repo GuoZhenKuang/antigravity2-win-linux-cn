@@ -141,6 +141,39 @@ function generateJs() {
         return null;
     }
 
+    // 会话选择器的更新时间由前端在运行时生成，实际值会随数量和
+    // 时间单位变化。只匹配完整的相对时间文本，不翻译孤立数字或单位。
+    function getRelativeTimeTranslation(value) {
+        const normalized = norm(value);
+        let match = normalized.match(/^(\\d+)\\s*(s|m|h|d|w|mo|yr)$/i);
+        if (match) {
+            const compactUnits = {
+                s: "秒前",
+                m: "分钟前",
+                h: "小时前",
+                d: "天前",
+                w: "周前",
+                mo: "个月前",
+                yr: "年前"
+            };
+            return match[1] + compactUnits[match[2].toLowerCase()];
+        }
+
+        match = normalized.match(/^(\\d+)\\s*(sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|day|days|wk|wks|week|weeks|mo|mos|month|months|yr|yrs|year|years)\\s+ago$/i);
+        if (!match) return null;
+
+        const unit = match[2].toLowerCase();
+        let translatedUnit = "";
+        if (/^sec/.test(unit)) translatedUnit = "秒前";
+        else if (/^min/.test(unit)) translatedUnit = "分钟前";
+        else if (/^(?:hr|hour)/.test(unit)) translatedUnit = "小时前";
+        else if (/^day/.test(unit)) translatedUnit = "天前";
+        else if (/^(?:wk|week)/.test(unit)) translatedUnit = "周前";
+        else if (/^mo/.test(unit)) translatedUnit = "个月前";
+        else if (/^(?:yr|year)/.test(unit)) translatedUnit = "年前";
+        return translatedUnit ? match[1] + translatedUnit : null;
+    }
+
     // 核心隔离判断：回溯检查当前节点是否逻辑上属于“禁止汉化区”
     function isInBlockedZone(node) {
         let curr = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
@@ -296,6 +329,111 @@ function generateJs() {
         return true;
     }
 
+    // 基线配额提示中的日期由运行时插入，且可能被 React 拆为多个节点。只有完整
+    // 英文句子出现后才替换，防止日期尚未插入完时把首位数字误当作完整刷新时间。
+    function getBaselineQuotaRefreshTranslation(value) {
+        const match = norm(value).match(/^Your plan(?:'s|’s) baseline quota will refresh on\\s+(.+?)[.。]$/i);
+        if (!match) return null;
+
+        let refreshTime = match[1].trim();
+        // “on 2.” 只是日期异步插入过程中的首位片段，不能提前生成“于 2 刷新”。
+        // 等待 MutationObserver 收到完整日期时间后，再由容器规则重排整句。
+        if (/^\\d+$/.test(refreshTime)) return null;
+        // 某些构建会额外插入孤立的数字和句点，随后才渲染真正的日期时间。
+        // 仅在其后紧跟完整日期时间时忽略该无语义的前缀。
+        const strayPrefix = refreshTime.match(/^\\d+\\.\\s+(\\d{2}\\/\\d{1,2}\\/\\d{1,2}\\s+\\d{1,2}:\\d{2}:\\d{2})$/);
+        if (strayPrefix) refreshTime = strayPrefix[1];
+
+        return "您当前计划的基础配额将于 " + refreshTime + " 刷新。";
+    }
+
+    // 在不改动元素结构和可点击子元素的前提下，将文本节点范围替换为单个译文。
+    // 用于“前缀 + 动态日期 + 后续链接”这类由多个 React 文本节点组成的句子。
+    function replaceTextRange(textNodes, start, end, value) {
+        let offset = 0;
+        let replaced = false;
+        for (const textNode of textNodes) {
+            const original = textNode.nodeValue || '';
+            const nodeStart = offset;
+            const nodeEnd = nodeStart + original.length;
+            offset = nodeEnd;
+
+            if (nodeEnd <= start || nodeStart >= end) continue;
+
+            const before = start > nodeStart ? original.slice(0, start - nodeStart) : '';
+            const after = end < nodeEnd ? original.slice(end - nodeStart) : '';
+            if (!replaced) {
+                replaceTextNode(textNode, before + value);
+                replaced = true;
+                // 如果同一节点在原句后还有英文提示，将它拆到新节点中，让常规词典
+                // 处理，而不是把整段中英混合文本标记为“已翻译”。
+                if (after && textNode.parentNode) {
+                    textNode.parentNode.insertBefore(document.createTextNode(after), textNode.nextSibling);
+                }
+            } else {
+                if (after) {
+                    translatedValues.delete(textNode);
+                    textNode.nodeValue = after;
+                } else {
+                    replaceTextNode(textNode, '');
+                }
+            }
+        }
+        return replaced;
+    }
+
+    function translateBaselineQuotaNotice(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        // 由外至内遍历时，先让更小的实际提示容器处理，避免在页面根节点跨区域拼接文本。
+        if (Array.from(element.children || []).some(child => /Your plan(?:'s|’s) baseline quota will refresh on/i.test(child.textContent || ''))) {
+            return false;
+        }
+        // 父容器可能同时包含用户消息或编辑器等禁区；只拼接可翻译节点，绝不跨越禁区。
+        const textNodes = collectTextNodes(element).filter(textNode => !isInBlockedZone(textNode));
+        if (textNodes.length === 0) return false;
+
+        const text = textNodes.map(textNode => textNode.nodeValue || '').join('');
+        const match = text.match(/Your plan(?:'s|’s) baseline quota will refresh on\\s+(.+?)\\.(?=\\s*(?:To continue using this model now, enable AI Credit overages\\.|You can upgrade to a Google AI Ultra plan to receive higher rate limits\\.|View plans?\\.?|$))/i);
+        if (!match || typeof match.index !== 'number') return false;
+
+        const translated = getBaselineQuotaRefreshTranslation(match[0]);
+        if (!translated) return false;
+        return replaceTextRange(textNodes, match.index, match.index + match[0].length, translated);
+    }
+
+    function getDynamicSubagentStatusTranslation(value) {
+        const normalized = norm(value);
+        let match = normalized.match(/^Found\\s+(\\d+)\\s+subagents?(?:\\s*([>›❯〉→]))?$/i);
+        if (match) return "找到 " + match[1] + " 个子智能体" + (match[2] ? " " + match[2] : "");
+
+        match = normalized.match(/^(\\d+)\\s+questions?$/i);
+        if (match) return match[1] + " 个问题";
+
+        match = normalized.match(/^(\\d+)\\s+subagents?\\s+(running|blocked|completed|failed)$/i);
+        if (match) {
+            const stateMap = {
+                running: "正在运行",
+                blocked: "已阻塞",
+                completed: "已完成",
+                failed: "已失败"
+            };
+            return match[1] + " 个子智能体" + stateMap[match[2].toLowerCase()];
+        }
+        return null;
+    }
+
+    // 数量状态也可能被图标和嵌套 span 拆开。只匹配完整、无交互内容的状态文本。
+    function translateDynamicSubagentStatusContainer(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        const textNodes = collectTextNodes(element).filter(textNode => !isInBlockedZone(textNode));
+        if (textNodes.length === 0) return false;
+        const translated = getDynamicSubagentStatusTranslation(textNodes.map(textNode => textNode.nodeValue || '').join(''));
+        if (!translated) return false;
+        replaceTextNode(textNodes[0], translated);
+        for (let i = 1; i < textNodes.length; i++) replaceTextNode(textNodes[i], '');
+        return true;
+    }
+
     // React 会把同一段 JSX 文案任意拆成多个相邻 Text 节点。先将同一元素中的
     // 连续文本片段拼接后匹配词典，再把译文写回第一个节点，避免残留英文碎片。
     function getCombinedStatusTranslation(value) {
@@ -303,6 +441,15 @@ function generateJs() {
         if (!normalized) return null;
         if (map.has(normalized)) return map.get(normalized);
         if (lowerMap.has(normalized.toLowerCase())) return lowerMap.get(normalized.toLowerCase());
+
+        const baselineQuotaTranslation = getBaselineQuotaRefreshTranslation(normalized);
+        if (baselineQuotaTranslation) return baselineQuotaTranslation;
+
+        const subagentStatusTranslation = getDynamicSubagentStatusTranslation(normalized);
+        if (subagentStatusTranslation) return subagentStatusTranslation;
+
+        const relativeTimeTranslation = getRelativeTimeTranslation(normalized);
+        if (relativeTimeTranslation) return relativeTimeTranslation;
 
         const showMoreMatch = normalized.match(/^Show\s+(\d+)\s+more(?:\.\.\.|…)?$/i);
         if (showMoreMatch) return "显示另外 " + showMoreMatch[1] + " 个...";
@@ -512,6 +659,19 @@ function generateJs() {
                 }
                 if (node.getAttribute('contenteditable') === 'true') {
                     isBlocked = true;
+
+                    // 反馈表单使用 contenteditable 编辑器实现，但其 placeholder 是固定
+                    // 属性而非用户内容。仅翻译这些精确匹配的展示属性，绝不改动编辑器
+                    // 的文本节点或已输入内容。
+                    for (const attr of ['placeholder', 'aria-placeholder', 'data-placeholder', 'aria-label', 'title']) {
+                        const value = node.getAttribute(attr);
+                        if (!value) continue;
+                        const normalizedValue = norm(value);
+                        const shortcutTranslation = translateWithShortcut(normalizedValue);
+                        if (shortcutTranslation) node.setAttribute(attr, shortcutTranslation);
+                        else if (map.has(normalizedValue)) node.setAttribute(attr, map.get(normalizedValue));
+                        else if (lowerMap.has(normalizedValue.toLowerCase())) node.setAttribute(attr, lowerMap.get(normalizedValue.toLowerCase()));
+                    }
                 }
                 
                 if (isBlocked) {
@@ -530,7 +690,7 @@ function generateJs() {
                     // 对于 INPUT, TEXTAREA 和 SVG，虽然不翻译其子元素或内容，但需要翻译其 placeholder, title, aria-label 等属性
                     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SVG') {
                         if (!isInBlockedZone(node.parentElement)) {
-                            for (const attr of ['placeholder', 'title', 'aria-label']) {
+                            for (const attr of ['placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'aria-label']) {
                                 const v = node.getAttribute(attr);
                                 if (v) {
                                     const t = norm(v);
@@ -549,8 +709,10 @@ function generateJs() {
                 if (!isInBlockedZone(node)) {
                     translateArchivedConversationNotice(node);
                     translateShowMoreStatus(node);
+                    translateBaselineQuotaNotice(node);
+                    translateDynamicSubagentStatusContainer(node);
                     translateCombinedTextChildren(node);
-                    for (const attr of ['placeholder', 'title', 'aria-label']) {
+                    for (const attr of ['placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'aria-label']) {
                         const v = node.getAttribute(attr);
                         if (v) {
                             const t = norm(v);
@@ -591,6 +753,8 @@ function generateJs() {
                 // 文案可能在当前节点刚插入时才拼接完整，需从父元素重新检查整段。
                 if (translateArchivedConversationNotice(node.parentElement)) return;
                 if (translateShowMoreStatus(node.parentElement)) return;
+                if (translateBaselineQuotaNotice(node.parentElement)) return;
+                if (translateDynamicSubagentStatusContainer(node.parentElement)) return;
                 if (translateCombinedTextChildren(node.parentElement)) return;
 
                 if (translatedValues.get(node) === originalVal) return;
@@ -608,12 +772,21 @@ function generateJs() {
                 const shortcutTrans = translateWithShortcut(valNorm);
                 const fragmentedStatusTrans = translateFragmentedStatus(node, originalVal);
                 const exploredTrans = translateExploredStatus(valNorm);
+                const baselineQuotaRefreshTrans = getBaselineQuotaRefreshTranslation(valNorm);
+                const subagentStatusTrans = getDynamicSubagentStatusTranslation(valNorm);
+                const relativeTimeTrans = getRelativeTimeTranslation(valNorm);
                 if (fragmentedStatusTrans !== null) {
                     newVal = fragmentedStatusTrans;
                 } else if (shortcutTrans) {
                     newVal = shortcutTrans;
                 } else if (exploredTrans) {
                     newVal = exploredTrans;
+                } else if (baselineQuotaRefreshTrans) {
+                    newVal = baselineQuotaRefreshTrans;
+                } else if (subagentStatusTrans) {
+                    newVal = subagentStatusTrans;
+                } else if (relativeTimeTrans) {
+                    newVal = relativeTimeTrans;
                 } else if (map.has(valNorm)) {
                     newVal = map.get(valNorm);
                 } else if (/^Gemini\\s+(.+?)\\s+is now available$/i.test(valNorm)) {
@@ -854,10 +1027,6 @@ function generateJs() {
                     newVal = valNorm.replace(/^Individual quota reached\. Please upgrade your subscription to increase your limits\. Resets in (.+?)\.?$/i, (match, t) => {
                         return "个人配额已达上限。请升级订阅以提高限额。将于 " + t + " 后重置。";
                     });
-                } else if (/^Your plan's baseline quota will refresh on (.+?)\./i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Your plan's baseline quota will refresh on (.+?)\./i, (match, dt) => {
-                        return "您的计划基线配额将于 " + dt + " 刷新。";
-                    });
                 } else if (/^Mark\s+(\d+)\s+conversations?\s+as\s+read$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Mark\s+(\d+)\s+conversations?\s+as\s+read$/i, (match, num) => {
                         return "将 " + num + " 个对话标记为已读";
@@ -873,32 +1042,6 @@ function generateJs() {
                 } else if (/^Version\\s+([\\d\\.]+)$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Version\\s+([\\d\\.]+)$/i, (match, v) => {
                         return "版本 " + v;
-                    });
-                } else if (/^(\\d+)(s|m|h|d|w|mo|yr)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)(s|m|h|d|w|mo|yr)$/i, (match, num, unit) => {
-                        const unitLower = unit.toLowerCase();
-                        let unitStr = "";
-                        if (unitLower === "s") unitStr = "秒前";
-                        else if (unitLower === "m") unitStr = "分钟前";
-                        else if (unitLower === "h") unitStr = "小时前";
-                        else if (unitLower === "d") unitStr = "天前";
-                        else if (unitLower === "w") unitStr = "周前";
-                        else if (unitLower === "mo") unitStr = "个月前";
-                        else if (unitLower === "yr") unitStr = "年前";
-                        return num + unitStr;
-                    });
-                } else if (/^(\d+)\s*(sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|day|days|wk|wks|week|weeks|mo|mos|month|months|yr|yrs|year|years)\s+ago$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\d+)\s*(sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|day|days|wk|wks|week|weeks|mo|mos|month|months|yr|yrs|year|years)\s+ago$/i, (match, num, unit) => {
-                        const unitLower = unit.toLowerCase();
-                        let unitStr = "";
-                        if (/^sec/i.test(unitLower)) unitStr = "秒前";
-                        else if (/^min/i.test(unitLower)) unitStr = "分钟前";
-                        else if (/^hr|^hour/i.test(unitLower)) unitStr = "小时前";
-                        else if (/^day/i.test(unitLower)) unitStr = "天前";
-                        else if (/^wk|^week/i.test(unitLower)) unitStr = "周前";
-                        else if (/^mo/i.test(unitLower)) unitStr = "个月前";
-                        else if (/^yr|^year/i.test(unitLower)) unitStr = "年前";
-                        return num + " " + unitStr;
                     });
                 } else if (/^(\d+)\s+subagents?\s+(running|blocked|completed|failed)$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(\d+)\s+subagents?\s+(running|blocked|completed|failed)$/i, (match, num, state) => {
@@ -1053,11 +1196,21 @@ function generateJs() {
                 for (const n of m.addedNodes) translateNode(n);
             } else if (m.type === 'characterData') {
                 translateNode(m.target);
+            } else if (m.type === 'attributes') {
+                // 反馈类型切换时 React 会复用同一个 textarea，只更新 placeholder
+                // 属性；此时不会产生 childList 或 characterData 变更。
+                translateNode(m.target);
             }
         }
     });
 
-    const obsOpts = { childList: true, subtree: true, characterData: true };
+    const obsOpts = {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'aria-label']
+    };
 
     const startEngine = () => {
         const target = document.body || document.documentElement;
