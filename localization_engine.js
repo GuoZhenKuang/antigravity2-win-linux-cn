@@ -211,6 +211,7 @@ function generateJs() {
         if (/^tools?$/.test(normalizedType)) return "个工具";
         if (/^rules?$/.test(normalizedType)) return "条规则";
         if (/^repos(?:itories)?$/.test(normalizedType)) return "个仓库";
+        if (/^images?$/.test(normalizedType)) return "张图片";
         return null;
     }
 
@@ -225,7 +226,7 @@ function generateJs() {
         const items = match[2].trim().split(/\\s*,\\s*/);
         const translatedItems = [];
         for (const item of items) {
-            const itemMatch = item.trim().match(/^(\\d+)\\s+(files?|folders?|pages?|search(?:es)?|tasks?|commands?|tools?|rules?|repos(?:itories)?)$/i);
+            const itemMatch = item.trim().match(/^(\\d+)\\s+(files?|folders?|pages?|search(?:es)?|tasks?|commands?|tools?|rules?|repos(?:itories)?|images?)$/i);
             if (!itemMatch) return null;
             const unit = getExploredStatusUnit(itemMatch[2]);
             if (!unit) return null;
@@ -374,7 +375,7 @@ function generateJs() {
 
         // 步骤状态可拆为“Explored ”+“1”+“ folder”。除完整状态外，也只处理
         // 带有计数的精确资源片段，并保留逗号或展开箭头等独立 UI 元素。
-        const statusItemMatch = currentText.match(new RegExp('^(files?|folders?|pages?|search(?:es)?|tasks?|commands?|tools?|rules?|repos(?:itories)?)(\\\\s*,\\\\s*|\\\\s*' + EXPLORED_STATUS_SUFFIX + ')?$', 'i'));
+        const statusItemMatch = currentText.match(new RegExp('^(files?|folders?|pages?|search(?:es)?|tasks?|commands?|tools?|rules?|repos(?:itories)?|images?)(\\s*,\\s*|\\s*' + EXPLORED_STATUS_SUFFIX + ')?$', 'i'));
         if (statusItemMatch && previous) {
             const unit = getExploredStatusUnit(statusItemMatch[1]);
             const tail = statusItemMatch[2] || '';
@@ -595,8 +596,13 @@ function generateJs() {
                 if (translatedValues.get(node) === originalVal) return;
 
                 let newVal = originalVal;
-                const valNorm = norm(originalVal);
+                // 剥除 UI 框架自动添加的 (Recommended) 前缀标记
+                if (/^\(Recommended\)\s+/i.test(newVal)) {
+                    newVal = newVal.replace(/^\(Recommended\)\s+/i, '');
+                }
+                const valNorm = norm(newVal);
                 const valLower = valNorm.toLowerCase();
+
                 
                 // 1. 精确匹配（含大小写自动纠正与快捷键检测）
                 const shortcutTrans = translateWithShortcut(valNorm);
@@ -844,6 +850,14 @@ function generateJs() {
                     newVal = valNorm.replace(/^All scheduled tasks run as (.+?)[\.\s]*$/i, (match, model) => {
                         return "所有计划任务均以 " + model + " 模型运行。";
                     });
+                } else if (/^Individual quota reached\. Please upgrade your subscription to increase your limits\. Resets in (.+?)\.?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Individual quota reached\. Please upgrade your subscription to increase your limits\. Resets in (.+?)\.?$/i, (match, t) => {
+                        return "个人配额已达上限。请升级订阅以提高限额。将于 " + t + " 后重置。";
+                    });
+                } else if (/^Your plan's baseline quota will refresh on (.+?)\./i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Your plan's baseline quota will refresh on (.+?)\./i, (match, dt) => {
+                        return "您的计划基线配额将于 " + dt + " 刷新。";
+                    });
                 } else if (/^Mark\s+(\d+)\s+conversations?\s+as\s+read$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Mark\s+(\d+)\s+conversations?\s+as\s+read$/i, (match, num) => {
                         return "将 " + num + " 个对话标记为已读";
@@ -872,6 +886,44 @@ function generateJs() {
                         else if (unitLower === "mo") unitStr = "个月前";
                         else if (unitLower === "yr") unitStr = "年前";
                         return num + unitStr;
+                    });
+                } else if (/^(\d+)\s*(sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|day|days|wk|wks|week|weeks|mo|mos|month|months|yr|yrs|year|years)\s+ago$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\d+)\s*(sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|day|days|wk|wks|week|weeks|mo|mos|month|months|yr|yrs|year|years)\s+ago$/i, (match, num, unit) => {
+                        const unitLower = unit.toLowerCase();
+                        let unitStr = "";
+                        if (/^sec/i.test(unitLower)) unitStr = "秒前";
+                        else if (/^min/i.test(unitLower)) unitStr = "分钟前";
+                        else if (/^hr|^hour/i.test(unitLower)) unitStr = "小时前";
+                        else if (/^day/i.test(unitLower)) unitStr = "天前";
+                        else if (/^wk|^week/i.test(unitLower)) unitStr = "周前";
+                        else if (/^mo/i.test(unitLower)) unitStr = "个月前";
+                        else if (/^yr|^year/i.test(unitLower)) unitStr = "年前";
+                        return num + " " + unitStr;
+                    });
+                } else if (/^(\d+)\s+subagents?\s+(running|blocked|completed|failed)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\d+)\s+subagents?\s+(running|blocked|completed|failed)$/i, (match, num, state) => {
+                        const stateLower = state.toLowerCase();
+                        let stateStr = "";
+                        if (stateLower === "running") stateStr = "正在运行";
+                        else if (stateLower === "blocked") stateStr = "已阻塞";
+                        else if (stateLower === "completed") stateStr = "已完成";
+                        else if (stateLower === "failed") stateStr = "已失败";
+                        return num + " 个子智能体" + stateStr;
+                    });
+                } else if (/^(\d+)\s+questions?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\d+)\s+questions?$/i, (match, num) => {
+                        return num + " 个问题";
+                    });
+                } else if (/^Asking\s+(\d+)\s+questions?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Asking\s+(\d+)\s+questions?$/i, (match, num) => {
+                        return "正在询问 " + num + " 个问题";
+                    });
+                } else if (/^This will permanently delete (\d+) active (?:conversations?|chats?)(?: and (\d+) archived (?:conversations?|chats?))? within it\.?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^This will permanently delete (\d+) active (?:conversations?|chats?)(?: and (\d+) archived (?:conversations?|chats?))? within it\.?$/i, (match, active, archived) => {
+                        if (archived) {
+                            return "这将永久删除 " + active + " 个活跃对话及 " + archived + " 个已归档对话。";
+                        }
+                        return "这将永久删除 " + active + " 个活跃对话。";
                     });
                 } else if (/^(.+?): context deadline exceeded$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(.+?): context deadline exceeded$/i, (match, prefix) => {

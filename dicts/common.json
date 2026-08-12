@@ -237,6 +237,8 @@
     "This will permanently delete the project and ": "这将永久删除该项目及其包含的",
     "all conversations": "所有会话",
     " within it. This action cannot be undone.": "。此操作无法撤销。",
+    " within it.": "。",
+    " within it": "（包含在内）",
     "Select Environment": "选择环境",
     "Local": "本地",
     "Download": "下载",
