@@ -434,6 +434,31 @@ function generateJs() {
         return true;
     }
 
+    // 企业登录页的 “OR” 是两个分隔线之间的纯视觉分隔符。不能把 OR 加入全局
+    // 词典，否则可能误改技术说明、代码或用户内容；仅匹配该组件的固定结构。
+    function translateBusinessSsoOrDivider(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        if (element.tagName.toUpperCase() !== 'SPAN' || norm(element.textContent) !== 'OR') return false;
+
+        const className = typeof element.className === 'string' ? element.className : '';
+        const hasClass = (classes, classToken) => new RegExp('(?:^|\\\\s)' + classToken + '(?:\\\\s|$)').test(classes);
+        if (!hasClass(className, 'uppercase') || !hasClass(className, 'select-none')) return false;
+
+        const parent = element.parentElement;
+        if (!parent) return false;
+        const dividerCount = Array.from(parent.children || []).filter(sibling => {
+            if (!sibling || sibling === element || sibling.tagName?.toUpperCase() !== 'DIV') return false;
+            const siblingClasses = typeof sibling.className === 'string' ? sibling.className : '';
+            return hasClass(siblingClasses, 'flex-1') && hasClass(siblingClasses, 'h-px');
+        }).length;
+        if (dividerCount !== 2) return false;
+
+        const textNodes = collectTextNodes(element);
+        if (textNodes.length !== 1) return false;
+        replaceTextNode(textNodes[0], '或');
+        return true;
+    }
+
     // React 会把同一段 JSX 文案任意拆成多个相邻 Text 节点。先将同一元素中的
     // 连续文本片段拼接后匹配词典，再把译文写回第一个节点，避免残留英文碎片。
     function getCombinedStatusTranslation(value) {
@@ -711,6 +736,7 @@ function generateJs() {
                     translateShowMoreStatus(node);
                     translateBaselineQuotaNotice(node);
                     translateDynamicSubagentStatusContainer(node);
+                    translateBusinessSsoOrDivider(node);
                     translateCombinedTextChildren(node);
                     for (const attr of ['placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'aria-label']) {
                         const v = node.getAttribute(attr);
@@ -755,6 +781,7 @@ function generateJs() {
                 if (translateShowMoreStatus(node.parentElement)) return;
                 if (translateBaselineQuotaNotice(node.parentElement)) return;
                 if (translateDynamicSubagentStatusContainer(node.parentElement)) return;
+                if (translateBusinessSsoOrDivider(node.parentElement)) return;
                 if (translateCombinedTextChildren(node.parentElement)) return;
 
                 if (translatedValues.get(node) === originalVal) return;
