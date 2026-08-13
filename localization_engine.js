@@ -535,6 +535,44 @@ function generateJs() {
         return translateRun();
     }
 
+    // 提问卡片的选项标签由模型在运行时生成，偶尔会呈现为“中文 (English)”。
+    // 只在带进度、跳过和继续操作的问答组件中识别选项行，删除末尾重复的
+    // 纯英文释义；技术内容、聊天正文以及其他区域的括号文本均不受影响。
+    function translateQuestionnaireOptionLabel(node, value) {
+        const normalized = norm(value);
+        const bilingualMatch = normalized.match(/^(.+?[\\u3400-\\u9fff].*?)\\s*[（(]([A-Za-z][A-Za-z0-9 .,'’/&+:#-]*)[)）]$/);
+        if (!bilingualMatch) return null;
+
+        let current = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        let optionRow = null;
+        for (let depth = 0; current && depth < 6; depth++) {
+            const rowText = norm(current.textContent);
+            const isCompactLabelRow = rowText.endsWith(normalized)
+                && rowText.length <= normalized.length + 32;
+            const isInteractive = isCompactLabelRow
+                && current.matches?.('button, [role="button"], [role="option"], [role="radio"], [role="checkbox"], [tabindex]');
+            const isNumberedRow = isCompactLabelRow && /^\\d+\\s*/.test(rowText);
+            if (isInteractive || isNumberedRow) {
+                optionRow = current;
+                break;
+            }
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+        if (!optionRow) return null;
+
+        current = optionRow.parentElement || (optionRow.getRootNode?.().host ?? null);
+        for (let depth = 0; current && depth < 10; depth++) {
+            // 不把整个页面当作问答卡片，避免弹窗打开期间影响页面上的其他交互项。
+            if (current === document.body || current === document.documentElement) break;
+            const cardText = norm(current.textContent);
+            const hasProgress = /\\b\\d+\\s+of\\s+\\d+\\b/i.test(cardText);
+            const hasActions = /(?:Skip|跳过)/i.test(cardText) && /(?:Continue|继续)/i.test(cardText);
+            if (cardText.length <= 4000 && hasProgress && hasActions) return bilingualMatch[1].trim();
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+        return null;
+    }
+
     // 处理被框架拆开的动态状态文案。比如：
     //   "29 " + "tool" + "s enabled"
     //   "All scheduled tasks run as " + "Flash."
@@ -787,9 +825,11 @@ function generateJs() {
                 if (translatedValues.get(node) === originalVal) return;
 
                 let newVal = originalVal;
-                // 剥除 UI 框架自动添加的 (Recommended) 前缀标记
-                if (/^\(Recommended\)\s+/i.test(newVal)) {
-                    newVal = newVal.replace(/^\(Recommended\)\s+/i, '');
+                // 暂时取下 UI 框架添加的 (Recommended) 前缀，以便按实际选项
+                // 文本匹配词典或动态规则；翻译完成后恢复为中文推荐标记。
+                const hasRecommended = /^\\(Recommended\\)(?:\\s+|$)/i.test(newVal);
+                if (hasRecommended) {
+                    newVal = newVal.replace(/^\\(Recommended\\)(?:\\s+|$)/i, '');
                 }
                 const valNorm = norm(newVal);
                 const valLower = valNorm.toLowerCase();
@@ -798,12 +838,15 @@ function generateJs() {
                 // 1. 精确匹配（含大小写自动纠正与快捷键检测）
                 const shortcutTrans = translateWithShortcut(valNorm);
                 const fragmentedStatusTrans = translateFragmentedStatus(node, originalVal);
+                const questionnaireOptionTrans = translateQuestionnaireOptionLabel(node, valNorm);
                 const exploredTrans = translateExploredStatus(valNorm);
                 const baselineQuotaRefreshTrans = getBaselineQuotaRefreshTranslation(valNorm);
                 const subagentStatusTrans = getDynamicSubagentStatusTranslation(valNorm);
                 const relativeTimeTrans = getRelativeTimeTranslation(valNorm);
                 if (fragmentedStatusTrans !== null) {
                     newVal = fragmentedStatusTrans;
+                } else if (questionnaireOptionTrans) {
+                    newVal = questionnaireOptionTrans;
                 } else if (shortcutTrans) {
                     newVal = shortcutTrans;
                 } else if (exploredTrans) {
@@ -1208,6 +1251,9 @@ function generateJs() {
                     newVal = newVal.replace(/^files?\\s*>?\\s*$/i, () => "个文件");
                     newVal = newVal.replace(/^(\\d+)\\s+pages?(\\s*[>›]?)\\s*$/i, (m, n, suffix) => n + " 个页面" + suffix);
                     newVal = newVal.replace(/^pages?(\\s*[>›]?)\\s*$/i, (m, suffix) => "个页面" + suffix);
+                }
+                if (hasRecommended) {
+                    newVal = '（推荐）' + newVal;
                 }
                 if (newVal !== originalVal) {
                     translatedValues.set(node, newVal);
