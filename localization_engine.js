@@ -178,6 +178,118 @@ function generateJs() {
         return translatedUnit ? match[1] + translatedUnit : null;
     }
 
+    // 交付件名称末尾的时间戳由前端按当前日期动态格式化。仅转换完整的时间戳
+    // 后缀，保留其前面的文件/交付件名称，避免把用户命名纳入全局词典。
+    function getArtifactTimestampTranslation(value) {
+        const normalized = norm(value);
+        let match = normalized.match(/^(.*?)\\s*\\((Today|Yesterday)\\s+(\\d{1,2}):(\\d{2})\\s+(AM|PM)\\)$/i);
+        if (match) {
+            const prefix = match[1].trim();
+            const day = match[2].toLowerCase() === 'today' ? "今天" : "昨天";
+            const period = match[5].toUpperCase() === 'AM' ? "上午" : "下午";
+            const timestamp = "（" + day + " " + period + match[3] + ":" + match[4] + "）";
+            return prefix ? prefix + " " + timestamp : timestamp;
+        }
+
+        match = normalized.match(/^(.*?)\\s*\\((Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+(\\d{1,2})(?:,\\s*(\\d{4}))?\\s+(\\d{1,2}):(\\d{2})\\s+(AM|PM)\\)$/i);
+        if (!match) return null;
+
+        const monthMap = {
+            jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+            jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+        };
+        const prefix = match[1].trim();
+        const month = monthMap[match[2].toLowerCase()];
+        const year = match[4] ? match[4] + "年" : "";
+        const period = match[7].toUpperCase() === 'AM' ? "上午" : "下午";
+        const timestamp = "（" + year + month + "月" + match[3] + "日 " + period + match[5] + ":" + match[6] + "）";
+        return prefix ? prefix + " " + timestamp : timestamp;
+    }
+
+    // 数量标签由 React 拆成动态数字、英文单位和独立复数 s。完整匹配允许
+    // 单复数及已经被旧规则部分翻译的形态，绝不固定截图中的示例数量。
+    function getCompactCountLabelTranslation(value) {
+        const normalized = norm(value);
+        let match = normalized.match(/^(\\d+)\\s*(?:results?|个结果s?)$/i);
+        if (match) return match[1] + " 个结果";
+
+        match = normalized.match(/^(?:Listed|列出了)\\s*(\\d+)\\s*(?:tasks?|个任务\\s*s?)(?:\\s*([>v›❯〉→∨˅⌄▼▽⋁↓]))?$/i);
+        if (match) return "列出了 " + match[1] + " 个任务" + (match[2] ? " " + match[2] : "");
+
+        match = normalized.match(/^[（(]\\s*(\\d+)\\s*(?:subagents?|个?\\s*子智能体s?)\\s*[)）]$/i);
+        if (match) return "（" + match[1] + " 个子智能体）";
+        return null;
+    }
+
+    // 运行状态可能是单个文本节点，也可能被动画组件拆成“Working”与三个点。
+    // 仅接受完整的三点/省略号状态；中文状态后重新出现的点也会被规范化。
+    function getWorkingStatusTranslation(value) {
+        const normalized = norm(value).replace(/[\\u200B-\\u200D\\uFEFF]/g, '');
+        if (/^Working(?:\\s*\\.){3}$/i.test(normalized) || /^Working\\s*…$/i.test(normalized)) {
+            return "工作中...";
+        }
+        if (/^(?:处理中|工作中)(?:(?:\\s*\\.)|(?:\\s*…))+$/i.test(normalized)) {
+            return "工作中...";
+        }
+        return null;
+    }
+
+    function getQuotaDurationTranslation(value) {
+        const normalized = norm(value);
+        if (/^less than a minute$/i.test(normalized)) return "不到 1 分钟";
+
+        const parts = normalized.split(/\\s*,\\s*/);
+        if (parts.length < 1 || parts.length > 2) return null;
+        const translated = [];
+        for (const part of parts) {
+            const match = part.match(/^(\\d+)\\s+(days?|hours?|minutes?)$/i);
+            if (!match) return null;
+            const unit = /^day/i.test(match[2]) ? "天" : /^hour/i.test(match[2]) ? "小时" : "分钟";
+            translated.push(match[1] + " " + unit);
+        }
+        return translated.join(" ");
+    }
+
+    // 配额说明中的刷新时间来自运行时，完整句式匹配既保留动态值，也避免把
+    // day/hour 等孤立单位加入词典而影响其他界面或用户内容。
+    function getQuotaNoticeTranslation(value) {
+        const normalized = norm(value);
+        let match = normalized.match(/^You have hit your weekly limit, it refreshes in (.+?)\\. If on a supported paid plan, you can use AI credits in the interim or upgrade to a higher tier\\.$/i);
+        if (match) {
+            const duration = getQuotaDurationTranslation(match[1]);
+            if (duration) {
+                return "您已达到每周配额限制，将在 " + duration + "后刷新。如果使用的是受支持的付费计划，您可以在此期间使用 AI 额度，或升级到更高等级的套餐。";
+            }
+        }
+
+        match = normalized.match(/^You have hit your weekly limit, the 5-hour limit does not currently apply\\. Your weekly limit will fully refresh in (.+?)\\.$/i);
+        if (match) {
+            const duration = getQuotaDurationTranslation(match[1]);
+            if (duration) {
+                return "您已达到每周配额限制，因此当前不适用 5 小时配额限制。您的每周配额将在 " + duration + "后完全刷新。";
+            }
+        }
+
+        // React 更新单独的时长节点时，固定前后文可能已经是中文。只在完整的
+        // 中文配额句式中接受英文时长，避免将普通页面里的孤立时长全局翻译。
+        match = normalized.match(/^您已达到每周配额限制，将在 (.+?)后刷新。如果使用的是受支持的付费计划，您可以在此期间使用 AI 额度，或升级到更高等级的套餐。$/);
+        if (match) {
+            const duration = getQuotaDurationTranslation(match[1]);
+            if (duration) {
+                return "您已达到每周配额限制，将在 " + duration + "后刷新。如果使用的是受支持的付费计划，您可以在此期间使用 AI 额度，或升级到更高等级的套餐。";
+            }
+        }
+
+        match = normalized.match(/^您已达到每周配额限制，因此当前不适用 5 小时配额限制。您的每周配额将在 (.+?)后完全刷新。$/);
+        if (match) {
+            const duration = getQuotaDurationTranslation(match[1]);
+            if (duration) {
+                return "您已达到每周配额限制，因此当前不适用 5 小时配额限制。您的每周配额将在 " + duration + "后完全刷新。";
+            }
+        }
+        return null;
+    }
+
     // 核心隔离判断：回溯检查当前节点是否逻辑上属于“禁止汉化区”
     function isInBlockedZone(node) {
         let curr = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
@@ -291,6 +403,220 @@ function generateJs() {
         };
         visit(element);
         return nodes;
+    }
+
+    const SKILL_PICKER_DISPLAY_ENTRIES = [
+        {
+            source: 'btw',
+            display: "快速提问",
+            descriptions: [
+                'Ask a quick question without interrupting the main conversation.',
+                "在不中断主会话的情况下快速提问。"
+            ]
+        },
+        {
+            source: 'grill-me',
+            display: "方案访谈",
+            descriptions: [
+                'Interview me to align on a plan',
+                'Interview me to align on a plan.',
+                "通过访谈与我对齐方案",
+                "通过访谈与我对齐方案.",
+                "通过访谈与我对齐方案。"
+            ]
+        },
+        {
+            source: 'teamwork-preview',
+            display: "团队协作（预览）",
+            descriptions: [
+                'Invoke a team of agents to autonomously tackle large projects',
+                'Invoke a team of agents to autonomously tackle large projects.',
+                "调用智能体团队自主应对大型项目",
+                "调用智能体团队自主应对大型项目.",
+                "调用智能体团队自主应对大型项目。"
+            ]
+        },
+        {
+            source: 'learn',
+            display: "复盘学习",
+            descriptions: [
+                'Reflect on recent successes or corrections to capture reusable skills or rules.',
+                "反思最近的成功或改进，以捕获可复用的技能或规则。"
+            ]
+        }
+    ];
+
+    function getSkillPickerDisplayEntry(textNodes) {
+        const values = textNodes.map(textNode => norm(textNode.nodeValue));
+        return SKILL_PICKER_DISPLAY_ENTRIES.find(entry => {
+            const hasName = values.includes(entry.source) || values.includes(entry.display);
+            const hasDescription = entry.descriptions.some(description => values.includes(description));
+            return hasName && hasDescription;
+        }) || null;
+    }
+
+    // 技能选择器的 name 同时也是点击后使用的 recipe/slash-command 标识。这里只在
+    // 同一条目中出现对应说明时改写名称文本节点，不修改属性、数据对象或输入内容。
+    function translateSkillPickerEntry(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+
+        const textNodes = collectTextNodes(element);
+        if (textNodes.length < 2 || textNodes.some(textNode => isInBlockedZone(textNode))) return false;
+        const entry = getSkillPickerDisplayEntry(textNodes);
+        if (!entry) return false;
+
+        // 外层弹窗可能同时包含多个技能，优先交给实际承载名称与说明的最小后代。
+        if (Array.from(element.children || []).some(child => {
+            return !!getSkillPickerDisplayEntry(collectTextNodes(child));
+        })) return false;
+
+        const nameNode = textNodes.find(textNode => norm(textNode.nodeValue) === entry.source);
+        return nameNode ? replaceTextNode(nameNode, entry.display) : false;
+    }
+
+    // 主会话底部的运行提示使用稳定的 agent-loading 标识，并把动画点放在
+    // data-screenshot-volatile 子节点中循环渲染 0～3 个。只改写前缀文本节点，
+    // 保留动画节点及其 React 更新，避免等待三个点时漏过绝大多数动画帧。
+    function translateAgentLoadingStatus(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        if (element.getAttribute('data-testid') !== 'agent-loading') return false;
+
+        const textNodes = collectTextNodes(element);
+        if (textNodes.length === 0 || textNodes.some(textNode => isInBlockedZone(textNode))) return false;
+        const prefixNode = textNodes.find(textNode => /^(?:Working|处理中|工作中)$/i.test(norm(textNode.nodeValue)));
+        if (!prefixNode || norm(prefixNode.nodeValue) === "工作中") return false;
+        return replaceTextNode(prefixNode, (prefixNode.nodeValue || '').replace(/Working|处理中/i, "工作中"));
+    }
+
+    function translateWorkingStatusContainer(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        if (element.getAttribute('data-testid') === 'agent-loading') return false;
+
+        const textNodes = collectTextNodes(element);
+        if (textNodes.length === 0 || textNodes.some(textNode => isInBlockedZone(textNode))) return false;
+        const original = textNodes.map(textNode => textNode.nodeValue || '').join('');
+        const translated = getWorkingStatusTranslation(original);
+        if (!translated || norm(original) === translated) return false;
+
+        // 只处理完整状态所在的最小容器，不能吞掉同一行的工具标题或按钮文本。
+        if (Array.from(element.children || []).some(child => {
+            return !!getWorkingStatusTranslation(child.textContent || '');
+        })) return false;
+
+        const workingIndex = textNodes.findIndex(textNode => /Working|处理中|工作中/i.test(textNode.nodeValue || ''));
+        if (workingIndex < 0) return false;
+        for (let i = 0; i < textNodes.length; i++) {
+            replaceTextNode(textNodes[i], i === workingIndex ? translated : '');
+        }
+        return true;
+    }
+
+    // 这些紧凑计数标签可能被拆成 3～5 个 React 文本节点。数字节点必须保留，
+    // 这样数量变化时 React 只需更新该节点，中文单位不会退回英文或残留复数 s。
+    function translateCompactCountLabelContainer(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+
+        const textNodes = collectTextNodes(element);
+        if (textNodes.length === 0 || textNodes.some(textNode => isInBlockedZone(textNode))) return false;
+        const original = norm(textNodes.map(textNode => textNode.nodeValue || '').join(''));
+        const translated = getCompactCountLabelTranslation(original);
+        if (!translated || translated === original) return false;
+
+        // 从外层遍历时优先交给真正承载标签的最小后代，避免清空同一行的其他 UI。
+        if (Array.from(element.children || []).some(child => {
+            return !!getCompactCountLabelTranslation(child.textContent || '');
+        })) return false;
+
+        if (textNodes.length === 1) return replaceTextNode(textNodes[0], translated);
+
+        const countIndex = textNodes.findIndex(textNode => /^\\s*\\d+\\s*$/.test(textNode.nodeValue || ''));
+        // 数字和英文单位处在同一动态节点时不能压平多个 React 节点。Listed
+        // 标签需在此保留该组合节点，否则下一次更新时会造成两个数量并存。
+        if (countIndex < 0) {
+            if (/^(?:Listed|列出了)\\s*\\d+/i.test(original)) {
+                const countedTaskIndex = textNodes.findIndex(textNode => {
+                    return /^(\\d+)\\s*(?:tasks?|个任务\\s*s?)(?:\\s*[>v›❯〉→∨˅⌄▼▽⋁↓])?$/i.test(norm(textNode.nodeValue));
+                });
+                if (countedTaskIndex > 0) {
+                    const countedTaskMatch = norm(textNodes[countedTaskIndex].nodeValue).match(/^(\\d+)\\s*(?:tasks?|个任务\\s*s?)(?:\\s*([>v›❯〉→∨˅⌄▼▽⋁↓]))?$/i);
+                    for (let i = 0; i < countedTaskIndex; i++) {
+                        replaceTextNode(textNodes[i], i === countedTaskIndex - 1 ? "列出了 " : '');
+                    }
+                    replaceTextNode(textNodes[countedTaskIndex], countedTaskMatch[1] + " 个任务" + (countedTaskMatch[2] ? " " + countedTaskMatch[2] : ""));
+                    for (let i = countedTaskIndex + 1; i < textNodes.length; i++) {
+                        const trailingArrow = norm(textNodes[i].nodeValue).match(/^[>v›❯〉→∨˅⌄▼▽⋁↓]$/);
+                        replaceTextNode(textNodes[i], trailingArrow ? textNodes[i].nodeValue : '');
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        const count = (textNodes[countIndex].nodeValue || '').trim();
+        const translatedCountIndex = translated.indexOf(count);
+        if (translatedCountIndex < 0) return false;
+        const prefix = translated.slice(0, translatedCountIndex);
+        let suffix = translated.slice(translatedCountIndex + count.length);
+        let trailingMarker = '';
+        // 右括号或展开箭头有时属于独立按钮/文本节点。将其留在最后一个节点，
+        // 既保留原有结构，也让中间的复数 s 在数量更新时仍可单独清除。
+        if (textNodes.length > countIndex + 2) {
+            const markerMatch = suffix.match(/^(.*?)([）>v›❯〉→∨˅⌄▼▽⋁↓])$/);
+            if (markerMatch) {
+                suffix = markerMatch[1];
+                trailingMarker = markerMatch[2];
+            }
+        }
+
+        for (let i = 0; i < countIndex; i++) {
+            replaceTextNode(textNodes[i], i === countIndex - 1 ? prefix : '');
+        }
+        replaceTextNode(textNodes[countIndex], count);
+        for (let i = countIndex + 1; i < textNodes.length; i++) {
+            let value = i === countIndex + 1 ? suffix : '';
+            if (trailingMarker && i === textNodes.length - 1) value = trailingMarker;
+            replaceTextNode(textNodes[i], value);
+        }
+        return true;
+    }
+
+    // 配额段落通常是单个文本节点，但运行时也可能把刷新时长单独渲染。此规则
+    // 保留该动态节点，只重排完整句式的固定前后文；后续时长变化仍可增量更新。
+    function translateQuotaNoticeContainer(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+
+        const textNodes = collectTextNodes(element);
+        if (textNodes.length === 0 || textNodes.some(textNode => isInBlockedZone(textNode))) return false;
+        const original = norm(textNodes.map(textNode => textNode.nodeValue || '').join(''));
+        const translated = getQuotaNoticeTranslation(original);
+        if (!translated || translated === original) return false;
+
+        if (Array.from(element.children || []).some(child => {
+            return !!getQuotaNoticeTranslation(child.textContent || '');
+        })) return false;
+
+        if (textNodes.length === 1) return replaceTextNode(textNodes[0], translated);
+
+        const durationIndex = textNodes.findIndex(textNode => {
+            return !!getQuotaDurationTranslation(textNode.nodeValue || '');
+        });
+        if (durationIndex < 0) return false;
+
+        const translatedDuration = getQuotaDurationTranslation(textNodes[durationIndex].nodeValue || '');
+        const translatedDurationIndex = translated.indexOf(translatedDuration);
+        if (translatedDurationIndex < 0) return false;
+        const prefix = translated.slice(0, translatedDurationIndex);
+        const suffix = translated.slice(translatedDurationIndex + translatedDuration.length);
+
+        for (let i = 0; i < durationIndex; i++) {
+            replaceTextNode(textNodes[i], i === durationIndex - 1 ? prefix : '');
+        }
+        replaceTextNode(textNodes[durationIndex], translatedDuration);
+        for (let i = durationIndex + 1; i < textNodes.length; i++) {
+            replaceTextNode(textNodes[i], i === durationIndex + 1 ? suffix : '');
+        }
+        return true;
     }
 
     // 归档提示中的“History.”是可点击元素，React 会将它与前后文拆成不同节点。
@@ -657,6 +983,19 @@ function generateJs() {
         if (textLength <= 1600 && /(?:baseline quota|基础配额)/i.test(rawText)) {
             translated = translateBaselineQuotaNotice(element) || translated;
         }
+        if (textLength <= 800 && /(?:weekly limit|每周配额)/i.test(rawText)) {
+            translated = translateQuotaNoticeContainer(element) || translated;
+        }
+        if (textLength <= 500 && /(?:quick question without interrupting|align on a plan|team of agents to autonomously|recent successes or corrections|不中断主会话|通过访谈与我对齐|智能体团队自主应对|反思最近的成功或改进)/i.test(rawText)) {
+            translated = translateSkillPickerEntry(element) || translated;
+        }
+        if (textLength <= 80 && /(?:Working|处理中|工作中)/i.test(rawText)) {
+            translated = translateAgentLoadingStatus(element) || translated;
+            translated = translateWorkingStatusContainer(element) || translated;
+        }
+        if (textLength <= 120 && /(?:\\bresults?\\b|个结果|Listed|列出了|\\bsubagents?\\b|子智能体)/i.test(rawText)) {
+            translated = translateCompactCountLabelContainer(element) || translated;
+        }
         if (textLength <= 240 &&
             /(?:\\bsubagents?\\b|^Found\\s+\\d+|^Timed\\s+\\d+|Messaged\\s+Root\\s+Agent|\\btasks?\\s+running\\b|\\bactive\\s+goals?\\b|^Goals?\\s+\\d+|\\bquestions?\\b)/i.test(rawText.trim())) {
             translated = translateDynamicSubagentStatusContainer(element) || translated;
@@ -678,6 +1017,18 @@ function generateJs() {
         if (!normalized) return null;
         if (map.has(normalized)) return map.get(normalized);
         if (lowerMap.has(normalized.toLowerCase())) return lowerMap.get(normalized.toLowerCase());
+
+        const workingStatusTranslation = getWorkingStatusTranslation(normalized);
+        if (workingStatusTranslation) return workingStatusTranslation;
+
+        const compactCountLabelTranslation = getCompactCountLabelTranslation(normalized);
+        if (compactCountLabelTranslation) return compactCountLabelTranslation;
+
+        const artifactTimestampTranslation = getArtifactTimestampTranslation(normalized);
+        if (artifactTimestampTranslation) return artifactTimestampTranslation;
+
+        const quotaNoticeTranslation = getQuotaNoticeTranslation(normalized);
+        if (quotaNoticeTranslation) return quotaNoticeTranslation;
 
         const baselineQuotaTranslation = getBaselineQuotaRefreshTranslation(normalized);
         if (baselineQuotaTranslation) return baselineQuotaTranslation;
@@ -742,6 +1093,10 @@ function generateJs() {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) {
             return false;
         }
+
+        // 紧凑计数标签已由结构化规则保留数字与箭头节点。通用文本合并会把旧
+        // 数量压入第一个固定节点，导致 React 更新数字后出现重复数量。
+        if (getCompactCountLabelTranslation(element.textContent || '')) return false;
 
         let textRun = [];
         const translateRun = () => {
@@ -1148,6 +1503,10 @@ function generateJs() {
                 const artifactFileCountTrans = getArtifactFileCountTranslation(valNorm);
                 const commandInputStatusTrans = getCommandInputStatusTranslation(valNorm);
                 const relativeTimeTrans = getRelativeTimeTranslation(valNorm);
+                const workingStatusTrans = getWorkingStatusTranslation(valNorm);
+                const compactCountLabelTrans = getCompactCountLabelTranslation(valNorm);
+                const artifactTimestampTrans = getArtifactTimestampTranslation(valNorm);
+                const quotaNoticeTrans = getQuotaNoticeTranslation(valNorm);
                 if (fragmentedStatusTrans !== null) {
                     newVal = fragmentedStatusTrans;
                 } else if (questionnaireOptionTrans) {
@@ -1174,6 +1533,14 @@ function generateJs() {
                     newVal = commandInputStatusTrans;
                 } else if (relativeTimeTrans) {
                     newVal = relativeTimeTrans;
+                } else if (workingStatusTrans) {
+                    newVal = workingStatusTrans;
+                } else if (compactCountLabelTrans) {
+                    newVal = compactCountLabelTrans;
+                } else if (artifactTimestampTrans) {
+                    newVal = artifactTimestampTrans;
+                } else if (quotaNoticeTrans) {
+                    newVal = quotaNoticeTrans;
                 } else if (map.has(valNorm)) {
                     newVal = map.get(valNorm);
                 } else if (/^Gemini\\s+(.+?)\\s+is now available$/i.test(valNorm)) {
