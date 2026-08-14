@@ -110,6 +110,10 @@ function generateJs() {
     // 禁区类名、标签与语义属性特征
     const BLOCKED_CLASSES = ['monaco-editor', 'editor-container', 'terminal', 'output-view', 'debug-console', 'code-view', 'artifact-container', 'suggest-widget'];
     const BLOCKED_TAGS = ['SCRIPT', 'STYLE', 'CODE', 'PRE', 'INPUT', 'TEXTAREA', 'SVG', 'CANVAS', 'SYMBOL', 'PATH'];
+    // 只有可能承载用户文本的禁用标签才需要额外写入网页翻译保护标记。
+    // SVG/PATH 等图形标签本身已经被引擎直接跳过，为每个图标增加 class 和
+    // translate 属性只会在设置页制造大量无意义的属性变更与样式重算。
+    const AUTO_TRANSLATE_PROTECTED_TAGS = new Set(['CODE', 'PRE', 'INPUT', 'TEXTAREA']);
     // Antigravity 2.6.0 会为每条已发送/历史用户消息添加此稳定测试标识。
     // 排除消息本体，避免 UI 词条与用户原文相同时误译聊天气泡。
     const BLOCKED_TEST_IDS = new Set(['user-input-step']);
@@ -226,9 +230,14 @@ function generateJs() {
     }
 
     function replaceTextNode(node, value) {
-        if (!node) return;
+        if (!node) return false;
+        // 写入与当前内容相同的 CharacterData 仍可能产生 MutationRecord。
+        // 对项目删除摘要这类多节点规则而言，同值写回会让观察器不断重新进入，
+        // 最终耗尽渲染线程。先记录已翻译值，再彻底跳过无变化的 DOM 写入。
         translatedValues.set(node, value);
+        if (node.nodeValue === value) return false;
         node.nodeValue = value;
+        return true;
     }
 
     const EXPLORED_STATUS_SUFFIX = '[>v›∨˅⌄▼▽⋁\\u2228\\u02c5\\u2304\\u25bc\\u25bd\\u276f\\u2193]';
@@ -290,7 +299,7 @@ function generateJs() {
     function translateArchivedConversationNotice(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
         const noticeText = norm(element.textContent);
-        const noticePattern = /^(?:View|视图|查看)\\s*(?:an\\s+archived\\s+conversation|个?\\s*已归档(?:的)?对话)\\s*(?:in|，?请前往)\\s*(?:History|历史记录)[.。]?$/i;
+        const noticePattern = /^(?:View|视图|查看)\\s*(?:an\\s+archived\\s+conversation|个?\\s*已归档(?:的)?(?:会话|对话))\\s*(?:in|，?请前往)\\s*(?:History|历史记录)[.。]?$/i;
         if (!noticePattern.test(noticeText)) return false;
 
         // History 在当前版本中不一定使用 <a>，也可能是 button/span。取第一个
@@ -311,7 +320,7 @@ function generateJs() {
         }
         replaceTextNode(historyTextNodes[0], "历史记录");
         for (let i = 1; i < historyTextNodes.length; i++) replaceTextNode(historyTextNodes[i], '');
-        historyElement.parentNode.insertBefore(document.createTextNode("中查看已归档的对话。"), historyElement.nextSibling);
+        historyElement.parentNode.insertBefore(document.createTextNode("中查看已归档的会话。"), historyElement.nextSibling);
         return true;
     }
 
@@ -406,6 +415,24 @@ function generateJs() {
         let match = normalized.match(/^Found\\s+(\\d+)\\s+subagents?(?:\\s*([>›❯〉→]))?$/i);
         if (match) return "找到 " + match[1] + " 个子智能体" + (match[2] ? " " + match[2] : "");
 
+        match = normalized.match(/^Timed\\s+(\\d+)\\s+(seconds?|minutes?|hours?)(?:\\s*([>›❯〉→]))?$/i);
+        if (match) {
+            const unit = /^second/i.test(match[2]) ? "秒" : /^minute/i.test(match[2]) ? "分钟" : "小时";
+            return "耗时 " + match[1] + " " + unit + (match[3] ? " " + match[3] : "");
+        }
+
+        match = normalized.match(/^Messaged\\s+Root\\s+Agent(?:\\s*([>›❯〉→]))?$/i);
+        if (match) return "已向主智能体发送消息" + (match[1] ? " " + match[1] : "");
+
+        match = normalized.match(/^(\\d+)\\s+tasks?\\s+running,\\s*(\\d+)\\s+active\\s+goals?$/i);
+        if (match) return match[1] + " 个任务正在运行，" + match[2] + " 个活跃目标";
+
+        match = normalized.match(/^(\\d+)\\s+active\\s+goals?$/i);
+        if (match) return match[1] + " 个活跃目标";
+
+        match = normalized.match(/^Goals?\\s+(\\d+)$/i);
+        if (match) return "目标 " + match[1];
+
         match = normalized.match(/^(\\d+)\\s+questions?$/i);
         if (match) return match[1] + " 个问题";
 
@@ -420,6 +447,156 @@ function generateJs() {
             return match[1] + " 个子智能体" + stateMap[match[2].toLowerCase()];
         }
         return null;
+    }
+
+    // 系统事件标题可能由“[状态] + 动态任务标题”组成。只翻译已知状态标记，
+    // 保留后面的任务标题原文，避免将用户命名的任务内容纳入全局词典。
+    function getBracketedTaskStatusTranslation(value) {
+        const normalized = norm(value);
+        const match = normalized.match(/^\\[(Completed|Blocked|Running|Failed|Stopped|In Progress|Cancelled|Canceled)\\](?:\\s+(.+))?$/i);
+        if (!match) return null;
+
+        const sourceStatus = match[1];
+        const translatedStatus = map.get(sourceStatus)
+            || lowerMap.get(sourceStatus.toLowerCase());
+        if (!translatedStatus) return null;
+        return "[" + translatedStatus + "]" + (match[2] ? " " + match[2] : "");
+    }
+
+    // 产品名及 project/workspace 名称来自运行时产品配置。保留这些名称本身，
+    // 只翻译固定的界面说明，避免为某个品牌或未来产品变体建立硬编码词条。
+    function getDynamicProductUiTranslation(value) {
+        const normalized = norm(value);
+        let match = normalized.match(/^When toggled on,\\s+(.+?)\\s+collects usage data to help Google enhance performance and features\\.$/i);
+        if (match) return "启用后，" + match[1] + " 会收集使用数据，以帮助 Google 改进性能和功能。";
+
+        match = normalized.match(/^Receive product updates, tips, and promotions from Google\\s+(.+?)\\s+via email\\.$/i);
+        if (match) return "通过电子邮件接收 Google " + match[1] + " 的产品更新、使用技巧和推广信息。";
+
+        match = normalized.match(/^When toggled on,\\s+(.+?)\\s+will use your AI credits to fulfill model requests once you're out of model quota\\.\\s+\\1\\s+will always use your model quota first before using AI credits\\.$/i);
+        if (match) return "启用后，当模型配额用尽时，" + match[1] + " 将使用您的 AI 额度处理模型请求。系统会优先使用模型配额，之后才使用 AI 额度。";
+
+        match = normalized.match(/^Build with\\s+(.+?)\\s+Plugins$/i);
+        if (match) return "使用 " + match[1] + " 插件构建";
+
+        match = normalized.match(/^Plugins are packaged collections of skills and MCPs to help the Agent in\\s+(.+?)\\s+work with Google developer products\\. You can always change your choices in Settings\\.$/i);
+        if (match) return "插件是打包的技能与 MCP 集合，用于帮助 " + match[1] + " 中的智能体使用 Google 开发者产品。您随时可以在设置中更改选择。";
+
+        match = normalized.match(/^Manage\\s+(project|workspace)\\s+folders, agent settings, and permissions\\.$/i);
+        if (match) {
+            const scope = match[1].toLowerCase() === "project" ? "项目" : "工作区";
+            return "管理" + scope + "文件夹、智能体设置和权限。";
+        }
+
+        match = normalized.match(/^Agent settings and permissions for conversations outside of\\s+(projects|workspaces)\\.$/i);
+        if (match) {
+            const scope = match[1].toLowerCase() === "projects" ? "项目" : "工作区";
+            return "用于不属于任何" + scope + "的会话的智能体设置和权限。";
+        }
+        return null;
+    }
+
+    function getProjectConversationCountTranslation(value) {
+        const normalized = norm(value);
+        let match = normalized.match(/^(\\d+)\\s+(?:active conversations?|个活跃会话)(?:\\s*(?:and|及)\\s*(\\d+)\\s+(?:archived conversations?|个已归档会话))?$/i);
+        if (match) {
+            let result = match[1] + " 个活跃会话";
+            if (match[2]) result += "及 " + match[2] + " 个已归档会话";
+            return result;
+        }
+
+        match = normalized.match(/^(\\d+)\\s+(?:archived conversations?|个已归档会话)$/i);
+        return match ? match[1] + " 个已归档会话" : null;
+    }
+
+    // 项目危险区域的删除摘要由项目名和会话数量动态拼接。完整文本节点可以
+    // 直接翻译；React 拆分节点则交给下方的结构化处理，避免宽泛翻译 including。
+    function getProjectDeleteSummaryTranslation(value) {
+        const normalized = norm(value);
+        const match = normalized.match(/^(?:Permanently delete|永久删除)\\s+(.{1,200}?)\\s*(?:including|，?包含)\\s+((?:\\d+\\s+(?:active conversations?|个活跃会话)(?:\\s*(?:and|及)\\s*\\d+\\s+(?:archived conversations?|个已归档会话))?)|(?:\\d+\\s+(?:archived conversations?|个已归档会话)))[.。]?$/i);
+        if (!match) return null;
+
+        const countTranslation = getProjectConversationCountTranslation(match[2]);
+        return countTranslation ? "永久删除 " + match[1] + "，包含 " + countTranslation + "。" : null;
+    }
+
+    function translateProjectDeleteSummary(element) {
+        if (!element) return false;
+
+        // 2.8.x 会异步挂载多个项目设置面板，MutationObserver 收到的节点可能是
+        // 会话数量所在的 strong，而不是完整说明 span。从任意新增子节点向上找到
+        // 最近的实际说明 span；逐节点替换固定文案，保留项目名和 strong 结构。
+        // 不能把整句压入首节点再清空其余节点，否则 React 后续更新项目名/计数时
+        // 会把新值插回旧位置，造成一个项目的摘要覆盖到下一个项目。
+        let current = element.nodeType === Node.TEXT_NODE ? element.parentElement : element;
+        for (let depth = 0; current && depth < 6; depth++) {
+            if (current === document.body || current === document.documentElement) break;
+            if (current.nodeType === Node.ELEMENT_NODE &&
+                current.tagName?.toUpperCase() === 'SPAN' &&
+                !isInBlockedZone(current)) {
+                const textNodes = collectTextNodes(current).filter(textNode => !isInBlockedZone(textNode));
+                const wholeTranslation = getProjectDeleteSummaryTranslation(
+                    textNodes.map(textNode => textNode.nodeValue || '').join('')
+                );
+                if (wholeTranslation) {
+                    const prefixIndex = textNodes.findIndex(textNode => /^(?:Permanently delete|永久删除)$/i.test(norm(textNode.nodeValue)));
+                    const includingIndex = textNodes.findIndex((textNode, index) => {
+                        return index > prefixIndex && /^(?:including|，?包含)$/i.test(norm(textNode.nodeValue));
+                    });
+                    const countIndex = textNodes.findIndex((textNode, index) => {
+                        return index > includingIndex && !!getProjectConversationCountTranslation(textNode.nodeValue);
+                    });
+                    if (prefixIndex < 0 || includingIndex < 0 || countIndex < 0) return false;
+
+                    // 项目名必须位于前缀和 including 之间；这样即使向上回溯时遇到
+                    // 其他普通 span，也不会误把无关文本当成删除摘要。
+                    const hasProjectName = textNodes.slice(prefixIndex + 1, includingIndex)
+                        .some(textNode => norm(textNode.nodeValue));
+                    if (!hasProjectName) return false;
+
+                    replaceTextNode(textNodes[prefixIndex], "永久删除");
+                    replaceTextNode(textNodes[includingIndex], "，包含 ");
+                    replaceTextNode(textNodes[countIndex], getProjectConversationCountTranslation(textNodes[countIndex].nodeValue));
+
+                    const punctuationNode = textNodes.slice(countIndex + 1)
+                        .find(textNode => /^[.。]$/.test(norm(textNode.nodeValue)));
+                    if (punctuationNode) replaceTextNode(punctuationNode, "。");
+                    return true;
+                }
+            }
+            current = current.parentElement || (current.parentNode && current.parentNode.host);
+        }
+        return false;
+    }
+
+    // 自定义内容预算的百分比由运行时计算。既支持完整文本节点，也支持
+    // React 拆出的“数值”与“% of ...”相邻文本节点，不固定某个示例值。
+    function getCustomizationBudgetTranslation(value) {
+        const match = norm(value).match(/^(\\d+(?:\\.\\d+)?)%\\s+of the customization budget is available\\.$/i);
+        return match ? match[1] + "% 的个性化定制预算可用。" : null;
+    }
+
+    // 交付件标题中的文件数由运行时插入，不能用固定数字或残缺后缀词条替换。
+    function getArtifactFileCountTranslation(value) {
+        const match = norm(value).match(/^Artifacts\\s*\\((\\d+)\\s+Files?\\s+for\\s+Conversation\\)$/i);
+        return match ? "交付件（本会话有 " + match[1] + " 个文件）" : null;
+    }
+
+    // 命令输入卡片会按状态和输入类型组合文案。匹配完整状态，避免翻译
+    // “Error sending”之类的宽泛片段而影响其他发送错误。
+    function getCommandInputStatusTranslation(value) {
+        const match = norm(value).match(/^(Rejected sending|Sent|Suggested sending|Error sending|Sending)\\s+(termination request|input)\\s+to command$/i);
+        if (!match) return null;
+
+        const item = match[2].toLowerCase() === "termination request" ? "终止请求" : "输入";
+        switch (match[1].toLowerCase()) {
+            case "rejected sending": return "已拒绝向命令发送" + item;
+            case "sent": return "已向命令发送" + item;
+            case "suggested sending": return "建议向命令发送" + item;
+            case "error sending": return "向命令发送" + item + "时出错";
+            case "sending": return "正在向命令发送" + item;
+            default: return null;
+        }
     }
 
     // 数量状态也可能被图标和嵌套 span 拆开。只匹配完整、无交互内容的状态文本。
@@ -459,6 +636,41 @@ function generateJs() {
         return true;
     }
 
+    // 这些规则需要读取一个小型容器的合并文本。旧实现会对设置弹窗中的每个
+    // 元素无条件执行全部规则，其中部分规则还会递归收集所有后代文本，导致
+    // 大型设置页首次挂载时出现明显停顿。先以文本长度和稳定英文特征筛选，
+    // 只有可能命中的紧凑容器才进入对应的深层检查。
+    function translateSpecialContainers(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        if (!element.childNodes || element.childNodes.length === 0) return false;
+
+        const rawText = element.textContent || '';
+        const textLength = rawText.length;
+        let translated = false;
+
+        if (textLength <= 300 && /(?:archived conversations?|已归档.*(?:会话|对话))/i.test(rawText)) {
+            translated = translateArchivedConversationNotice(element) || translated;
+        }
+        if (textLength <= 80 && /(?:Show\\s+\\d+\\s+more|显示另外\\s+\\d+\\s+个)/i.test(rawText)) {
+            translated = translateShowMoreStatus(element) || translated;
+        }
+        if (textLength <= 1600 && /(?:baseline quota|基础配额)/i.test(rawText)) {
+            translated = translateBaselineQuotaNotice(element) || translated;
+        }
+        if (textLength <= 240 &&
+            /(?:\\bsubagents?\\b|^Found\\s+\\d+|^Timed\\s+\\d+|Messaged\\s+Root\\s+Agent|\\btasks?\\s+running\\b|\\bactive\\s+goals?\\b|^Goals?\\s+\\d+|\\bquestions?\\b)/i.test(rawText.trim())) {
+            translated = translateDynamicSubagentStatusContainer(element) || translated;
+        }
+        if (textLength <= 600 &&
+            /(?:Permanently delete|\\bincluding\\b|\\bactive conversations?\\b|\\barchived conversations?\\b|永久删除|，包含)/i.test(rawText)) {
+            translated = translateProjectDeleteSummary(element) || translated;
+        }
+        if (textLength <= 8 && element.tagName?.toUpperCase() === 'SPAN' && /^OR$/i.test(rawText.trim())) {
+            translated = translateBusinessSsoOrDivider(element) || translated;
+        }
+        return translated;
+    }
+
     // React 会把同一段 JSX 文案任意拆成多个相邻 Text 节点。先将同一元素中的
     // 连续文本片段拼接后匹配词典，再把译文写回第一个节点，避免残留英文碎片。
     function getCombinedStatusTranslation(value) {
@@ -473,19 +685,37 @@ function generateJs() {
         const subagentStatusTranslation = getDynamicSubagentStatusTranslation(normalized);
         if (subagentStatusTranslation) return subagentStatusTranslation;
 
+        const bracketedTaskStatusTranslation = getBracketedTaskStatusTranslation(normalized);
+        if (bracketedTaskStatusTranslation) return bracketedTaskStatusTranslation;
+
+        const productUiTranslation = getDynamicProductUiTranslation(normalized);
+        if (productUiTranslation) return productUiTranslation;
+
+        const projectDeleteSummaryTranslation = getProjectDeleteSummaryTranslation(normalized);
+        if (projectDeleteSummaryTranslation) return projectDeleteSummaryTranslation;
+
+        const customizationBudgetTranslation = getCustomizationBudgetTranslation(normalized);
+        if (customizationBudgetTranslation) return customizationBudgetTranslation;
+
+        const artifactFileCountTranslation = getArtifactFileCountTranslation(normalized);
+        if (artifactFileCountTranslation) return artifactFileCountTranslation;
+
+        const commandInputStatusTranslation = getCommandInputStatusTranslation(normalized);
+        if (commandInputStatusTranslation) return commandInputStatusTranslation;
+
         const relativeTimeTranslation = getRelativeTimeTranslation(normalized);
         if (relativeTimeTranslation) return relativeTimeTranslation;
 
-        const showMoreMatch = normalized.match(/^Show\s+(\d+)\s+more(?:\.\.\.|…)?$/i);
+        const showMoreMatch = normalized.match(/^Show\\s+(\\d+)\\s+more(?:\\.\\.\\.|…)?$/i);
         if (showMoreMatch) return "显示另外 " + showMoreMatch[1] + " 个...";
 
-        const geminiAvailableMatch = normalized.match(/^Gemini\s+(.+?)\s+is now available$/i);
+        const geminiAvailableMatch = normalized.match(/^Gemini\\s+(.+?)\\s+is now available$/i);
         if (geminiAvailableMatch) return "Gemini " + geminiAvailableMatch[1] + " 现已可用";
 
         const exploredTrans = translateExploredStatus(normalized);
         if (exploredTrans) return exploredTrans;
 
-        const toolMatch = normalized.match(/^(\d+)\s+tools?\s+enabled$/i);
+        const toolMatch = normalized.match(/^(\\d+)\\s+tools?\\s+enabled$/i);
         if (toolMatch) return toolMatch[1] + " 个工具已启用";
 
         const scheduleMatch = normalized.match(/^All scheduled tasks run as\\s+(.+)$/i);
@@ -493,16 +723,16 @@ function generateJs() {
             const model = scheduleMatch[1].replace(/[.。]+$/, '').trim();
             if (model) return "所有计划任务均以 " + model + " 模型运行。";
         }
-        const viewArchivedHistMatch = normalized.match(/^View(?:\s+(\d+))?\s+archived conversations?\s+in\s+History\.?$/i);
+        const viewArchivedHistMatch = normalized.match(/^View(?:\\s+(\\d+))?\\s+archived conversations?\\s+in\\s+History\\.?$/i);
         if (viewArchivedHistMatch) {
             return viewArchivedHistMatch[1]
-                ? "在“历史记录”中查看 " + viewArchivedHistMatch[1] + " 个已归档对话。"
-                : "可在“历史记录”中查看已归档的对话。";
+                ? "在“历史记录”中查看 " + viewArchivedHistMatch[1] + " 个已归档会话。"
+                : "可在“历史记录”中查看已归档的会话。";
         }
-        const viewArchivedMatch = normalized.match(/^View(?:\s+(\d+))?\s+archived conversations?(?:\s+in)?$/i);
+        const viewArchivedMatch = normalized.match(/^View(?:\\s+(\\d+))?\\s+archived conversations?(?:\\s+in)?$/i);
         if (viewArchivedMatch) {
             const countText = viewArchivedMatch[1] ? " " + viewArchivedMatch[1] + " 个" : "";
-            return "查看" + countText + "已归档对话" + (/in$/i.test(normalized) ? "，请前往 " : "");
+            return "查看" + countText + "已归档会话" + (/in$/i.test(normalized) ? "，请前往 " : "");
         }
 
         return null;
@@ -598,13 +828,61 @@ function generateJs() {
             if (/^\\d+$/.test(previousText)) return " " + unit + translatedTail;
         }
 
-        // “No ” + “Projects” + “ found” 会由词典先将 Projects 翻成“项目列表”。
+        // 智能体状态标题常被拆成普通文本、加粗数字和折叠按钮。分别支持
+        // “Found ”+“20 subagents”及“Found ”+“20”+“ subagents”等形态。
+        let statusMatch = currentText.match(/^(\\d+)\\s+subagents?(?:\\s*([>›❯〉→]))?$/i);
+        if (statusMatch && /^Found$/i.test(previousText)) {
+            replaceTextNode(previous, "找到");
+            return " " + statusMatch[1] + " 个子智能体" + (statusMatch[2] ? " " + statusMatch[2] : "");
+        }
+        statusMatch = currentText.match(/^subagents?(?:\\s*([>›❯〉→]))?$/i);
+        if (statusMatch && /^\\d+$/.test(previousText)) {
+            const foundNode = findPreviousTextNode(previous);
+            if (foundNode && /^Found$/i.test(norm(foundNode.nodeValue))) {
+                replaceTextNode(foundNode, "找到 ");
+                return " 个子智能体" + (statusMatch[1] ? " " + statusMatch[1] : "");
+            }
+        }
+
+        statusMatch = currentText.match(/^(\\d+)\\s+(seconds?|minutes?|hours?)(?:\\s*([>›❯〉→]))?$/i);
+        if (statusMatch && /^Timed$/i.test(previousText)) {
+            const unit = /^second/i.test(statusMatch[2]) ? "秒" : /^minute/i.test(statusMatch[2]) ? "分钟" : "小时";
+            replaceTextNode(previous, "耗时");
+            return " " + statusMatch[1] + " " + unit + (statusMatch[3] ? " " + statusMatch[3] : "");
+        }
+        statusMatch = currentText.match(/^(seconds?|minutes?|hours?)(?:\\s*([>›❯〉→]))?$/i);
+        if (statusMatch && /^\\d+$/.test(previousText)) {
+            const timedNode = findPreviousTextNode(previous);
+            if (timedNode && /^Timed$/i.test(norm(timedNode.nodeValue))) {
+                const unit = /^second/i.test(statusMatch[1]) ? "秒" : /^minute/i.test(statusMatch[1]) ? "分钟" : "小时";
+                replaceTextNode(timedNode, "耗时 ");
+                return " " + unit + (statusMatch[2] ? " " + statusMatch[2] : "");
+            }
+        }
+
+        statusMatch = currentText.match(/^Root\\s+Agent(?:\\s*([>›❯〉→]))?$/i);
+        if (statusMatch && /^Messaged$/i.test(previousText)) {
+            replaceTextNode(previous, "已向");
+            return "主智能体发送消息" + (statusMatch[1] ? " " + statusMatch[1] : "");
+        }
+
+        statusMatch = currentText.match(/^(\\d+)\\s+active\\s+goals?$/i);
+        if (statusMatch && /^(\\d+)\\s+tasks?\\s+running,?$/i.test(previousText)) {
+            const taskCount = previousText.match(/^(\\d+)/)[1];
+            replaceTextNode(previous, taskCount + " 个任务正在运行，");
+            return statusMatch[1] + " 个活跃目标";
+        }
+        if (/^active\\s+goals?$/i.test(currentText) && /^\\d+$/.test(previousText)) {
+            return " 个活跃目标";
+        }
+
+        // “No ” + “Projects” + “ found” 会由词典先将 Projects 翻成“项目”。
         // 在处理收尾节点时合并为完整中文短句，避免保留两侧英文碎片。
-        if (/^found$/i.test(currentText) && previousText === "项目列表") {
+        if (/^found$/i.test(currentText) && previousText === "项目") {
             const noNode = findPreviousTextNode(previous);
             if (noNode && /^No$/i.test(norm(noNode.nodeValue))) {
                 replaceTextNode(noNode, '');
-                replaceTextNode(previous, "未找到项目列表");
+                replaceTextNode(previous, "未找到项目");
                 return '';
             }
         }
@@ -613,6 +891,11 @@ function generateJs() {
         // 合并后保持自然语序，并避免残留英文尾句。
         if (/^when not in a project$/i.test(currentText) && previousText === "是，且始终允许") {
             replaceTextNode(previous, "是，且在不属于任何项目时始终允许");
+            return '';
+        }
+
+        if (/^in this project$/i.test(currentText) && previousText === "是，且始终允许") {
+            replaceTextNode(previous, "是，且在此项目中始终允许");
             return '';
         }
 
@@ -673,10 +956,27 @@ function generateJs() {
             }
         }
 
-        if (/^in$/i.test(currentText) && (previousText === "个已归档对话" || previousText === "已归档对话" || previousText === "archived conversation" || previousText === "archived conversations")) {
+        // 删除项目/工作区弹窗会把确认句拆成“前缀 + 类型 + 名称 + ?”。
+        // 只有向前同时找到删除确认前缀和项目类型时才补写“吗？”，避免把页面上
+        // 其他独立问号做成全局替换。
+        if (currentText === '?' && previous) {
+            let candidate = previous;
+            let hasProjectScope = false;
+            for (let i = 0; i < 8 && candidate; i++) {
+                const candidateText = norm(candidate.nodeValue);
+                if (/^(?:project|workspace|项目|工作区)$/i.test(candidateText)) {
+                    hasProjectScope = true;
+                } else if (candidateText === "您确定要删除" && hasProjectScope) {
+                    return " 吗？";
+                }
+                candidate = findPreviousTextNode(candidate);
+            }
+        }
+
+        if (/^in$/i.test(currentText) && (previousText === "个已归档会话" || previousText === "已归档会话" || previousText === "个已归档对话" || previousText === "已归档对话" || previousText === "archived conversation" || previousText === "archived conversations")) {
             let viewNode = findPreviousTextNode(previous);
             let hasNumber = false;
-            if (viewNode && /^\d+$/.test(norm(viewNode.nodeValue))) {
+            if (viewNode && /^\\d+$/.test(norm(viewNode.nodeValue))) {
                 hasNumber = true;
                 viewNode = findPreviousTextNode(viewNode);
             }
@@ -687,7 +987,7 @@ function generateJs() {
             if (viewNode && /^View$/i.test(norm(viewNode.nodeValue))) {
                 replaceTextNode(viewNode, "查看");
                 if (!hasNumber) {
-                    replaceTextNode(previous, "已归档的对话");
+                    replaceTextNode(previous, "已归档的会话");
                 }
                 return "，请前往 ";
             }
@@ -696,7 +996,7 @@ function generateJs() {
         return null;
     }
 
-    function translateNode(node) {
+    function translateNode(node, parentContainersScanned = false) {
         try {
             if (!node) return;
 
@@ -737,7 +1037,9 @@ function generateJs() {
                     }
                 }
                 
-                if (isBlocked) {
+                const shouldMarkBlocked = isBlocked &&
+                    (!BLOCKED_TAGS.includes(tag) || AUTO_TRANSLATE_PROTECTED_TAGS.has(tag));
+                if (shouldMarkBlocked) {
                     if (node.getAttribute('translate') !== 'no') {
                         node.setAttribute('translate', 'no');
                     }
@@ -770,11 +1072,7 @@ function generateJs() {
                 
                 // 2. 只有当确实不在禁区时，才翻译其属性
                 if (!isInBlockedZone(node)) {
-                    translateArchivedConversationNotice(node);
-                    translateShowMoreStatus(node);
-                    translateBaselineQuotaNotice(node);
-                    translateDynamicSubagentStatusContainer(node);
-                    translateBusinessSsoOrDivider(node);
+                    translateSpecialContainers(node);
                     translateCombinedTextChildren(node);
                     for (const attr of ['placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'aria-label']) {
                         const v = node.getAttribute(attr);
@@ -789,11 +1087,18 @@ function generateJs() {
                 }
 
                 if (node.shadowRoot) translateNode(node.shadowRoot);
-                for (const child of node.childNodes) translateNode(child);
+                // 当前元素的容器规则已经在上方检查过；递归到它的直接文本子节点时
+                // 不再读取一次相同的 textContent。观察器直接传入变更文本节点时，
+                // parentContainersScanned 保持默认 false，动态组合文案仍会重新匹配。
+                for (const child of node.childNodes) translateNode(child, true);
 
             } else if (node.nodeType === Node.TEXT_NODE) {
                 let originalVal = node.nodeValue;
                 if (!originalVal || originalVal.trim().length < 1) return;
+                // MutationObserver 也会收到汉化引擎自身产生的 CharacterData 记录。
+                // 已经由本引擎写入且内容未再变化的节点必须在任何容器扫描之前退出，
+                // 否则大型设置页会把同一批节点重复检查一遍。
+                if (translatedValues.get(node) === originalVal) return;
 
                 // 核心：如果是 skeleton 骨架占位文本，强制打上不翻译标记，防止自动翻译（例如 Google Translate 网页翻译）将其翻译为“装。资料。包装。资料。”
                 if (originalVal.toLowerCase().includes('pack.info')) {
@@ -815,14 +1120,8 @@ function generateJs() {
                 if (isInBlockedZone(node)) return;
 
                 // 文案可能在当前节点刚插入时才拼接完整，需从父元素重新检查整段。
-                if (translateArchivedConversationNotice(node.parentElement)) return;
-                if (translateShowMoreStatus(node.parentElement)) return;
-                if (translateBaselineQuotaNotice(node.parentElement)) return;
-                if (translateDynamicSubagentStatusContainer(node.parentElement)) return;
-                if (translateBusinessSsoOrDivider(node.parentElement)) return;
+                if (!parentContainersScanned && translateSpecialContainers(node.parentElement)) return;
                 if (translateCombinedTextChildren(node.parentElement)) return;
-
-                if (translatedValues.get(node) === originalVal) return;
 
                 let newVal = originalVal;
                 // 暂时取下 UI 框架添加的 (Recommended) 前缀，以便按实际选项
@@ -842,6 +1141,12 @@ function generateJs() {
                 const exploredTrans = translateExploredStatus(valNorm);
                 const baselineQuotaRefreshTrans = getBaselineQuotaRefreshTranslation(valNorm);
                 const subagentStatusTrans = getDynamicSubagentStatusTranslation(valNorm);
+                const bracketedTaskStatusTrans = getBracketedTaskStatusTranslation(valNorm);
+                const productUiTrans = getDynamicProductUiTranslation(valNorm);
+                const projectDeleteSummaryTrans = getProjectDeleteSummaryTranslation(valNorm);
+                const customizationBudgetTrans = getCustomizationBudgetTranslation(valNorm);
+                const artifactFileCountTrans = getArtifactFileCountTranslation(valNorm);
+                const commandInputStatusTrans = getCommandInputStatusTranslation(valNorm);
                 const relativeTimeTrans = getRelativeTimeTranslation(valNorm);
                 if (fragmentedStatusTrans !== null) {
                     newVal = fragmentedStatusTrans;
@@ -855,6 +1160,18 @@ function generateJs() {
                     newVal = baselineQuotaRefreshTrans;
                 } else if (subagentStatusTrans) {
                     newVal = subagentStatusTrans;
+                } else if (bracketedTaskStatusTrans) {
+                    newVal = bracketedTaskStatusTrans;
+                } else if (productUiTrans) {
+                    newVal = productUiTrans;
+                } else if (projectDeleteSummaryTrans) {
+                    newVal = projectDeleteSummaryTrans;
+                } else if (customizationBudgetTrans) {
+                    newVal = customizationBudgetTrans;
+                } else if (artifactFileCountTrans) {
+                    newVal = artifactFileCountTrans;
+                } else if (commandInputStatusTrans) {
+                    newVal = commandInputStatusTrans;
                 } else if (relativeTimeTrans) {
                     newVal = relativeTimeTrans;
                 } else if (map.has(valNorm)) {
@@ -903,7 +1220,7 @@ function generateJs() {
                     newVal = valNorm.replace(/^You have used some of your weekly limit, it will fully refresh in (\\d+) minutes?\\.$/i, (match, m) => {
                         return "您已使用部分每周配额，将在 " + m + " 分钟后完全刷新。";
                     });
-                } else if (/^You have used some of your weekly limit, it will fully refresh in less than a minute\.$/i.test(valNorm)) {
+                } else if (/^You have used some of your weekly limit, it will fully refresh in less than a minute\\.$/i.test(valNorm)) {
                     newVal = "您已使用部分每周配额，将在不到 1 分钟后完全刷新。";
                 } else if (/^You have used some of your 5-hour limit, it will fully refresh in (\\d+) hours?, (\\d+) minutes?\\.$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^You have used some of your 5-hour limit, it will fully refresh in (\\d+) hours?, (\\d+) minutes?\\.$/i, (match, h, m) => {
@@ -917,7 +1234,7 @@ function generateJs() {
                     newVal = valNorm.replace(/^You have used some of your 5-hour limit, it will fully refresh in (\\d+) minutes?\\.$/i, (match, m) => {
                         return "您已使用部分 5 小时配额，将在 " + m + " 分钟后完全刷新。";
                     });
-                } else if (/^You have used some of your 5-hour limit, it will fully refresh in less than a minute\.$/i.test(valNorm)) {
+                } else if (/^You have used some of your 5-hour limit, it will fully refresh in less than a minute\\.$/i.test(valNorm)) {
                     newVal = "您已使用部分 5 小时配额，将在不到 1 分钟后完全刷新。";
                 } else if (/^Your 5-hour limit will refresh in (\\d+) days?, (\\d+) hours?\\.$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Your 5-hour limit will refresh in (\\d+) days?, (\\d+) hours?\\.$/i, (match, d, h) => {
@@ -939,7 +1256,7 @@ function generateJs() {
                     newVal = valNorm.replace(/^Your 5-hour limit will refresh in (\\d+) minutes?\\.$/i, (match, m) => {
                         return "您的 5 小时配额将在 " + m + " 分钟后刷新。";
                     });
-                } else if (/^Your 5-hour limit will refresh in less than a minute\.$/i.test(valNorm)) {
+                } else if (/^Your 5-hour limit will refresh in less than a minute\\.$/i.test(valNorm)) {
                     newVal = "您的 5 小时配额将在不到 1 分钟后刷新。";
                 } else if (/^You have hit your 5-hour limit, it will refresh in (\\d+) days?, (\\d+) hours?\\. If on a supported paid plan, you can use AI credits in the interim\\.$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^You have hit your 5-hour limit, it will refresh in (\\d+) days?, (\\d+) hours?\\. If on a supported paid plan, you can use AI credits in the interim\\.$/i, (match, d, h) => {
@@ -1009,20 +1326,20 @@ function generateJs() {
                     newVal = valNorm.replace(/^You have hit your weekly limit, it will fully refresh in (\\d+) minutes?\\.$/i, (match, m) => {
                         return "您已达到每周配额限制，将在 " + m + " 分钟后完全刷新。";
                     });
-                } else if (/^You have hit your weekly limit, it will fully refresh in less than a minute\.$/i.test(valNorm)) {
+                } else if (/^You have hit your weekly limit, it will fully refresh in less than a minute\\.$/i.test(valNorm)) {
                     newVal = "您已达到每周配额限制，将在不到 1 分钟后完全刷新。";
-                } else if (/^Match case \((.+)\)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Match case \((.+)\)$/i, (m, k) => "区分大小写 (" + k + ")");
-                } else if (/^Match whole word \((.+)\)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Match whole word \((.+)\)$/i, (m, k) => "全字匹配 (" + k + ")");
-                } else if (/^Use regular expression \((.+)\)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Use regular expression \((.+)\)$/i, (m, k) => "使用正则表达式 (" + k + ")");
-                } else if (/^Previous match \((.+)\)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Previous match \((.+)\)$/i, (m, k) => "上一个匹配项 (" + k + ")");
-                } else if (/^Next match \((.+)\)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Next match \((.+)\)$/i, (m, k) => "下一个匹配项 (" + k + ")");
-                } else if (/^Close \((.+)\)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Close \((.+)\)$/i, (m, k) => "关闭 (" + k + ")");
+                } else if (/^Match case \\((.+)\\)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Match case \\((.+)\\)$/i, (m, k) => "区分大小写 (" + k + ")");
+                } else if (/^Match whole word \\((.+)\\)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Match whole word \\((.+)\\)$/i, (m, k) => "全字匹配 (" + k + ")");
+                } else if (/^Use regular expression \\((.+)\\)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Use regular expression \\((.+)\\)$/i, (m, k) => "使用正则表达式 (" + k + ")");
+                } else if (/^Previous match \\((.+)\\)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Previous match \\((.+)\\)$/i, (m, k) => "上一个匹配项 (" + k + ")");
+                } else if (/^Next match \\((.+)\\)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Next match \\((.+)\\)$/i, (m, k) => "下一个匹配项 (" + k + ")");
+                } else if (/^Close \\((.+)\\)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Close \\((.+)\\)$/i, (m, k) => "关闭 (" + k + ")");
                 } else if (/^Learn more about (.+)$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Learn more about (.+)$/i, (match, p) => {
                         let translatedPreset = p;
@@ -1046,11 +1363,11 @@ function generateJs() {
                     });
                 } else if (/^(\\d+) active conversations?$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(\\d+) active conversations?$/i, (match, num) => {
-                        return num + " 个活跃对话";
+                        return num + " 个活跃会话";
                     });
                 } else if (/^(\\d+) archived conversations?$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(\\d+) archived conversations?$/i, (match, num) => {
-                        return num + " 个已归档对话";
+                        return num + " 个已归档会话";
                     });
                 } else if (/^(\\d+) tasks? running$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(\\d+) tasks? running$/i, (match, num) => {
@@ -1089,32 +1406,32 @@ function generateJs() {
                     newVal = valNorm.replace(/^Updated\\s+(.+)$/i, (match, rest) => {
                         return "更新于 " + rest;
                     });
-                } else if (/^All scheduled tasks run as (.+?)[\.\s]*$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^All scheduled tasks run as (.+?)[\.\s]*$/i, (match, model) => {
+                } else if (/^All scheduled tasks run as (.+?)[\\.\\s]*$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^All scheduled tasks run as (.+?)[\\.\\s]*$/i, (match, model) => {
                         return "所有计划任务均以 " + model + " 模型运行。";
                     });
-                } else if (/^Individual quota reached\. Please upgrade your subscription to increase your limits\. Resets in (.+?)\.?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Individual quota reached\. Please upgrade your subscription to increase your limits\. Resets in (.+?)\.?$/i, (match, t) => {
+                } else if (/^Individual quota reached\\. Please upgrade your subscription to increase your limits\\. Resets in (.+?)\\.?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Individual quota reached\\. Please upgrade your subscription to increase your limits\\. Resets in (.+?)\\.?$/i, (match, t) => {
                         return "个人配额已达上限。请升级订阅以提高限额。将于 " + t + " 后重置。";
                     });
-                } else if (/^Mark\s+(\d+)\s+conversations?\s+as\s+read$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Mark\s+(\d+)\s+conversations?\s+as\s+read$/i, (match, num) => {
-                        return "将 " + num + " 个对话标记为已读";
+                } else if (/^Mark\\s+(\\d+)\\s+conversations?\\s+as\\s+read$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Mark\\s+(\\d+)\\s+conversations?\\s+as\\s+read$/i, (match, num) => {
+                        return "将 " + num + " 个会话标记为已读";
                     });
-                } else if (/^Mark\s+(\d+)\s+conversations?\s+as\s+unread$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Mark\s+(\d+)\s+conversations?\s+as\s+unread$/i, (match, num) => {
-                        return "将 " + num + " 个对话标记为未读";
+                } else if (/^Mark\\s+(\\d+)\\s+conversations?\\s+as\\s+unread$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Mark\\s+(\\d+)\\s+conversations?\\s+as\\s+unread$/i, (match, num) => {
+                        return "将 " + num + " 个会话标记为未读";
                     });
-                } else if (/^Mark\s+all\s+(?:conversations?\s+)?as\s+read$/i.test(valNorm)) {
-                    newVal = "将所有对话标记为已读";
-                } else if (/^Mark\s+all\s+(?:conversations?\s+)?as\s+unread$/i.test(valNorm)) {
-                    newVal = "将所有对话标记为未读";
+                } else if (/^Mark\\s+all\\s+(?:conversations?\\s+)?as\\s+read$/i.test(valNorm)) {
+                    newVal = "将所有会话标记为已读";
+                } else if (/^Mark\\s+all\\s+(?:conversations?\\s+)?as\\s+unread$/i.test(valNorm)) {
+                    newVal = "将所有会话标记为未读";
                 } else if (/^Version\\s+([\\d\\.]+)$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Version\\s+([\\d\\.]+)$/i, (match, v) => {
                         return "版本 " + v;
                     });
-                } else if (/^(\d+)\s+subagents?\s+(running|blocked|completed|failed)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\d+)\s+subagents?\s+(running|blocked|completed|failed)$/i, (match, num, state) => {
+                } else if (/^(\\d+)\\s+subagents?\\s+(running|blocked|completed|failed)$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+)\\s+subagents?\\s+(running|blocked|completed|failed)$/i, (match, num, state) => {
                         const stateLower = state.toLowerCase();
                         let stateStr = "";
                         if (stateLower === "running") stateStr = "正在运行";
@@ -1123,20 +1440,20 @@ function generateJs() {
                         else if (stateLower === "failed") stateStr = "已失败";
                         return num + " 个子智能体" + stateStr;
                     });
-                } else if (/^(\d+)\s+questions?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\d+)\s+questions?$/i, (match, num) => {
+                } else if (/^(\\d+)\\s+questions?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^(\\d+)\\s+questions?$/i, (match, num) => {
                         return num + " 个问题";
                     });
-                } else if (/^Asking\s+(\d+)\s+questions?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Asking\s+(\d+)\s+questions?$/i, (match, num) => {
+                } else if (/^Asking\\s+(\\d+)\\s+questions?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^Asking\\s+(\\d+)\\s+questions?$/i, (match, num) => {
                         return "正在询问 " + num + " 个问题";
                     });
-                } else if (/^This will permanently delete (\d+) active (?:conversations?|chats?)(?: and (\d+) archived (?:conversations?|chats?))? within it\.?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^This will permanently delete (\d+) active (?:conversations?|chats?)(?: and (\d+) archived (?:conversations?|chats?))? within it\.?$/i, (match, active, archived) => {
+                } else if (/^This will permanently delete (\\d+) active (?:conversations?|chats?)(?: and (\\d+) archived (?:conversations?|chats?))? within it\\.?$/i.test(valNorm)) {
+                    newVal = valNorm.replace(/^This will permanently delete (\\d+) active (?:conversations?|chats?)(?: and (\\d+) archived (?:conversations?|chats?))? within it\\.?$/i, (match, active, archived) => {
                         if (archived) {
-                            return "这将永久删除 " + active + " 个活跃对话及 " + archived + " 个已归档对话。";
+                            return "这将永久删除 " + active + " 个活跃会话及 " + archived + " 个已归档会话。";
                         }
-                        return "这将永久删除 " + active + " 个活跃对话。";
+                        return "这将永久删除 " + active + " 个活跃会话。";
                     });
                 } else if (/^(.+?): context deadline exceeded$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^(.+?): context deadline exceeded$/i, (match, prefix) => {
@@ -1156,17 +1473,21 @@ function generateJs() {
                     });
                 } else if (/^Permanently delete (.+?) including (\\d+) active conversations? and (\\d+) archived conversations?\\.?$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Permanently delete (.+?) including (\\d+) active conversations? and (\\d+) archived conversations?\\.?$/i, (match, name, active, archived) => {
-                        return "永久删除 " + name + "，包含 " + active + " 个活跃对话及 " + archived + " 个已归档对话。";
+                        return "永久删除 " + name + "，包含 " + active + " 个活跃会话及 " + archived + " 个已归档会话。";
                     });
                 } else if (/^This will permanently delete (.+?) including (\\d+) active conversations? and (\\d+) archived conversations?(?:\\. This action cannot be undone\\.)?$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^This will permanently delete (.+?) including (\\d+) active conversations? and (\\d+) archived conversations?(?:\\. This action cannot be undone\\.)?$/i, (match, name, active, archived) => {
-                        return "这将永久删除 " + name + "，包含 " + active + " 个活跃对话及 " + archived + " 个已归档对话。此操作无法撤销。";
+                        return "这将永久删除 " + name + "，包含 " + active + " 个活跃会话及 " + archived + " 个已归档会话。此操作无法撤销。";
                     });
                 } else {
                     // 2. 长句子串滑动替换
-                    for (const [key, translated] of longEntries) {
-                        if (key.length > 20 && valNorm.includes(key)) {
-                            newVal = newVal.split(key).join(translated);
+                    // 短标签不可能包含长度超过 20 的长句词条。先按当前文本长度
+                    // 快速排除，避免设置页数百个短标签逐一扫描完整词典。
+                    if (valNorm.length > 20) {
+                        for (const [key, translated] of longEntries) {
+                            if (key.length > 20 && key.length <= valNorm.length && valNorm.includes(key)) {
+                                newVal = newVal.split(key).join(translated);
+                            }
                         }
                     }
                     
@@ -1231,16 +1552,16 @@ function generateJs() {
                     newVal = newVal.replace(/You have hit your weekly limit, it will fully refresh in (\\d+) minutes?\\./gi, (match, m) => {
                         return "您已达到每周配额限制，将在 " + m + " 分钟后完全刷新。";
                     });
-                    newVal = newVal.replace(/You have used some of your weekly limit, it will fully refresh in less than a minute\./gi, "您已使用部分每周配额，将在不到 1 分钟后完全刷新。");
-                    newVal = newVal.replace(/You have hit your weekly limit, it will fully refresh in less than a minute\./gi, "您已达到每周配额限制，将在不到 1 分钟后完全刷新。");
-                    newVal = newVal.replace(/Your 5-hour limit will refresh in less than a minute\./gi, "您的 5 小时配额将在不到 1 分钟后刷新。");
-                    newVal = newVal.replace(/You have hit your 5-hour limit, it will refresh in less than a minute\. If on a supported paid plan, you can use AI credits in the interim\./gi, "您已达到 5 小时配额限制，将在不到 1 分钟后刷新。如果使用的是受支持的付费计划，您可以在此期间使用 AI 额度。");
-                    newVal = newVal.replace(/Match case \((.+)\)/gi, (m, k) => "区分大小写 (" + k + ")");
-                    newVal = newVal.replace(/Match whole word \((.+)\)/gi, (m, k) => "全字匹配 (" + k + ")");
-                    newVal = newVal.replace(/Use regular expression \((.+)\)/gi, (m, k) => "使用正则表达式 (" + k + ")");
-                    newVal = newVal.replace(/Previous match \((.+)\)/gi, (m, k) => "上一个匹配项 (" + k + ")");
-                    newVal = newVal.replace(/Next match \((.+)\)/gi, (m, k) => "下一个匹配项 (" + k + ")");
-                    newVal = newVal.replace(/Close \((.+)\)/gi, (m, k) => "关闭 (" + k + ")");
+                    newVal = newVal.replace(/You have used some of your weekly limit, it will fully refresh in less than a minute\\./gi, "您已使用部分每周配额，将在不到 1 分钟后完全刷新。");
+                    newVal = newVal.replace(/You have hit your weekly limit, it will fully refresh in less than a minute\\./gi, "您已达到每周配额限制，将在不到 1 分钟后完全刷新。");
+                    newVal = newVal.replace(/Your 5-hour limit will refresh in less than a minute\\./gi, "您的 5 小时配额将在不到 1 分钟后刷新。");
+                    newVal = newVal.replace(/You have hit your 5-hour limit, it will refresh in less than a minute\\. If on a supported paid plan, you can use AI credits in the interim\\./gi, "您已达到 5 小时配额限制，将在不到 1 分钟后刷新。如果使用的是受支持的付费计划，您可以在此期间使用 AI 额度。");
+                    newVal = newVal.replace(/Match case \\((.+)\\)/gi, (m, k) => "区分大小写 (" + k + ")");
+                    newVal = newVal.replace(/Match whole word \\((.+)\\)/gi, (m, k) => "全字匹配 (" + k + ")");
+                    newVal = newVal.replace(/Use regular expression \\((.+)\\)/gi, (m, k) => "使用正则表达式 (" + k + ")");
+                    newVal = newVal.replace(/Previous match \\((.+)\\)/gi, (m, k) => "上一个匹配项 (" + k + ")");
+                    newVal = newVal.replace(/Next match \\((.+)\\)/gi, (m, k) => "下一个匹配项 (" + k + ")");
+                    newVal = newVal.replace(/Close \\((.+)\\)/gi, (m, k) => "关闭 (" + k + ")");
                     // 步骤节点量词片段翻译（处理 Explored N search / file / page 等拆分文本节点）
                     const exploredSec3 = translateExploredStatus(newVal);
                     if (exploredSec3) {
@@ -1250,7 +1571,6 @@ function generateJs() {
                     newVal = newVal.replace(/^searches?\\s*>?\\s*$/i, () => "次搜索");
                     newVal = newVal.replace(/^files?\\s*>?\\s*$/i, () => "个文件");
                     newVal = newVal.replace(/^(\\d+)\\s+pages?(\\s*[>›]?)\\s*$/i, (m, n, suffix) => n + " 个页面" + suffix);
-                    newVal = newVal.replace(/^pages?(\\s*[>›]?)\\s*$/i, (m, suffix) => "个页面" + suffix);
                 }
                 if (hasRecommended) {
                     newVal = '（推荐）' + newVal;
@@ -1285,14 +1605,18 @@ function generateJs() {
         attributeFilter: ['placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'aria-label']
     };
 
+    let engineStarted = false;
     const startEngine = () => {
         const target = document.body || document.documentElement;
-        if (target) {
-            try {
-                observer.observe(target, obsOpts);
-                translateNode(target);
-            } catch (e) {}
-        }
+        if (!target || engineStarted) return;
+
+        engineStarted = true;
+        try {
+            // 首次静态内容在观察器接管前完成，避免把引擎自己的初始写入再处理一遍。
+            // 后续 React 挂载与更新全部由 MutationObserver 增量处理。
+            translateNode(target);
+            observer.observe(target, obsOpts);
+        } catch (e) {}
     };
 
     const origAttachShadow = Element.prototype.attachShadow;
@@ -1302,18 +1626,14 @@ function generateJs() {
         return sr;
     };
 
-    // 强力多阶段触发绑定
+    // DOMContentLoaded 足以覆盖预加载脚本早于 body 的情况；startEngine 自身幂等，
+    // window.load 只作为兜底，不再按 100ms～6s 重复扫描整棵页面树。
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', startEngine);
     } else {
         startEngine();
     }
     window.addEventListener('load', startEngine);
-    setTimeout(startEngine, 100);
-    setTimeout(startEngine, 300);
-    setTimeout(startEngine, 1000);
-    setTimeout(startEngine, 3000);
-    setTimeout(startEngine, 6000);
 })();
 ${SIGNATURE_END}`;
 
