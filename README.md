@@ -1,6 +1,6 @@
 # Antigravity 2.0 中文汉化引擎（Windows / Linux）
 
-> 本仓库基于 [Lucian-02/antigravity2-win-linux-cn](https://github.com/Lucian-02/antigravity2-win-linux-cn) 继续适配和维护；核心汉化方案及早期代码参考自 [qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)。感谢两位作者的开源工作。
+> 本仓库基于 [Lucian-02/antigravity2-win-linux-cn](https://github.com/Lucian-02/antigravity2-win-linux-cn) 继续适配和维护；核心汉化方案及早期代码参考自 [qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)。感谢两位作者公开分享代码。
 
 > **支持系统**：Windows / Linux（含 Ubuntu 等常见发行版，已内置安装与还原脚本）
 >
@@ -18,6 +18,8 @@
 
 > [!WARNING]
 > 本项目是社区维护的第三方汉化工具，并非 Google 或 Antigravity 官方产品。请只在上方标明的匹配版本中使用；官方客户端更新后，先等待本仓库适配新版，不要强行向不匹配的版本注入。
+>
+> 两个参考仓库目前均未声明许可证，本 fork 不擅自替原作者新增许可证。使用、修改或再分发代码前，请确认已获得适当授权，并保留上述来源与致谢。
 
 > [!IMPORTANT]
 > **聊天历史记录/对话内容隔离与匹配机制说明（开发者必读）**：
