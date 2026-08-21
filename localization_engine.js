@@ -20,6 +20,8 @@ if (process.platform === 'win32') {
 }
 
 const DICTS_FOLDER = 'dicts';
+const TARGET_APP_VERSION = '2.9.1';
+const ALLOW_COMPATIBLE_VERSION = process.argv.includes('--allow-compatible-version');
 const BRAND_TITLE_ALIASES = {
     english: 'english',
     en: 'english',
@@ -1978,12 +1980,19 @@ function generateJs() {
         if (!target || engineStarted) return;
 
         engineStarted = true;
-        try {
-            // 首次静态内容在观察器接管前完成，避免把引擎自己的初始写入再处理一遍。
-            // 后续 React 挂载与更新全部由 MutationObserver 增量处理。
-            translateNode(target);
-            observer.observe(target, obsOpts);
-        } catch (e) {}
+        const activateEngine = () => {
+            try {
+                // 先完成一次静态内容翻译，再让观察器接管后续 React 更新。
+                // 此过程放在页面 load 后的空闲阶段，避免大型页面的同步遍历阻塞首屏导航。
+                translateNode(target);
+                observer.observe(target, obsOpts);
+            } catch (e) {}
+        };
+        if (typeof window.requestIdleCallback === 'function') {
+            window.requestIdleCallback(activateEngine, { timeout: 2000 });
+        } else {
+            window.setTimeout(activateEngine, 0);
+        }
     };
 
     const origAttachShadow = Element.prototype.attachShadow;
@@ -1993,14 +2002,13 @@ function generateJs() {
         return sr;
     };
 
-    // DOMContentLoaded 足以覆盖预加载脚本早于 body 的情况；startEngine 自身幂等，
-    // window.load 只作为兜底，不再按 100ms～6s 重复扫描整棵页面树。
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', startEngine);
-    } else {
+    // 2.9.1 的首屏包含更多项目和个性化数据。等待 load 后再进入空闲阶段，
+    // 避免 DOMContentLoaded 时同步扫描整棵页面树导致 Electron loadURL 超时白屏。
+    if (document.readyState === 'complete') {
         startEngine();
+    } else {
+        window.addEventListener('load', startEngine, { once: true });
     }
-    window.addEventListener('load', startEngine);
 })();
 ${SIGNATURE_END}`;
 
@@ -2232,6 +2240,50 @@ function runCommandSync(cmd) {
     }
 }
 
+function extractAsar(asarPath, outputDir, label) {
+    if (fs.existsSync(outputDir)) {
+        fs.rmSync(outputDir, { recursive: true, force: true });
+    }
+
+    const result = runCommandSync(`npx -y @electron/asar extract "${asarPath}" "${outputDir}"`);
+    if (!result.success || !fs.existsSync(outputDir)) {
+        console.error(`[错误] ${label}解包失败，可能是由于系统未安装 Node.js/npm 或者网络限制。`);
+        console.error(`详情: ${result.stderr}\n${result.stdout}`);
+        return false;
+    }
+    return true;
+}
+
+function readExtractedAppVersion(extractedDir) {
+    const packagePath = path.join(extractedDir, 'package.json');
+    if (!fs.existsSync(packagePath)) return '';
+    try {
+        return String(JSON.parse(fs.readFileSync(packagePath, 'utf-8')).version || '');
+    } catch (e) {
+        return '';
+    }
+}
+
+function validateExtractedApp(extractedDir, label) {
+    const version = readExtractedAppVersion(extractedDir);
+    const preloadPath = path.join(extractedDir, 'dist', 'preload.js');
+    if (!fs.existsSync(preloadPath)) {
+        console.error(`[错误] ${label}缺少预期文件: ${preloadPath}`);
+        return false;
+    }
+
+    if (version !== TARGET_APP_VERSION) {
+        const targetMajor = TARGET_APP_VERSION.split('.')[0];
+        const actualMajor = version.split('.')[0];
+        if (!ALLOW_COMPATIBLE_VERSION || !version || actualMajor !== targetMajor) {
+            console.error(`[错误] ${label}版本为 ${version || '未知'}，当前汉化包完整适配 Antigravity v${TARGET_APP_VERSION}。`);
+            return false;
+        }
+        console.warn(`[兼容模式] ${label}版本为 ${version}，将沿用 v${TARGET_APP_VERSION} 词典和经过结构校验的注入逻辑。`);
+    }
+    return true;
+}
+
 function reportWritePermissionError(resourcesDir, error, action, entryScript = 'install.sh') {
     const detail = error && (error.code || error.message);
     console.error(`\n[权限不足] 无法${action} Antigravity 安装目录: ${resourcesDir}`);
@@ -2268,62 +2320,80 @@ function canWriteAntigravityResources(resourcesDir, entryScript) {
 function install20(resourcesDir) {
     const asarPath = path.join(resourcesDir, "app.asar");
     const bakPath = path.join(resourcesDir, "app.asar.bak");
+    const tempDir = path.join(__dirname, "_temp_asar");
+    const backupTempDir = path.join(__dirname, "_temp_asar_backup");
 
     if (!fs.existsSync(asarPath)) {
         console.error(`[错误] 未在资源目录中找到 app.asar: ${resourcesDir}`);
         return false;
     }
+    if (fs.existsSync(backupTempDir)) {
+        fs.rmSync(backupTempDir, { recursive: true, force: true });
+    }
 
-    // 1. 备份
-    if (!fs.existsSync(bakPath)) {
-        console.log(`[备份] 正在创建官方原始包备份: app.asar.bak ...`);
-        try {
+    // 1. 先解包并核对真实版本，避免官方升级后继续向不兼容的客户端盲目注入。
+    console.log(`[解包] 正在检查 app.asar...`);
+    if (!extractAsar(asarPath, tempDir, '当前 app.asar')) {
+        return false;
+    }
+    if (!validateExtractedApp(tempDir, '当前客户端')) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        return false;
+    }
+    const currentVersion = readExtractedAppVersion(tempDir);
+
+    let preloadPath = path.join(tempDir, "dist", "preload.js");
+    const currentPreload = fs.readFileSync(preloadPath, 'utf-8');
+    const currentIsLocalized = currentPreload.includes(SIGNATURE_START);
+
+    // 2. 官方升级会覆盖 app.asar，但旧版 app.asar.bak 可能残留。若当前包是
+    // 干净的官方包，就用它刷新备份；若当前包已汉化，则只接受同版本的官方备份。
+    try {
+        if (!currentIsLocalized) {
+            console.log(`[备份] 正在保存 Antigravity v${currentVersion} 官方原始包: app.asar.bak ...`);
             fs.copyFileSync(asarPath, bakPath);
-        } catch (e) {
-            if (e.code === 'EACCES' || e.code === 'EPERM' || e.code === 'EROFS') {
-                reportWritePermissionError(resourcesDir, e, '备份到');
-            } else {
-                console.error(`[错误] 创建 app.asar.bak 备份失败: ${e.message}`);
-            }
-            return false;
-        }
-        console.log(`[备份] 备份成功！`);
-    } else {
-        // 尝试用官方备份覆盖当前 app.asar，以确保每次汉化都基于最干净的官方英文包
-        try {
-            fs.copyFileSync(bakPath, asarPath);
-            console.log(`[还原] 已重置当前 app.asar 为官方原始备份包，以进行全新注入...`);
-        } catch (e) {
-            if (e.code === 'EACCES' || e.code === 'EPERM' || e.code === 'EROFS') {
-                reportWritePermissionError(resourcesDir, e, '写入');
+        } else {
+            if (!fs.existsSync(bakPath)) {
+                console.error('[错误] 当前 app.asar 已包含汉化，但未找到官方 app.asar.bak，无法安全重新安装。');
+                fs.rmSync(tempDir, { recursive: true, force: true });
                 return false;
             }
-            console.log(`[提示] 当前 app.asar 被锁定（可能是客户端正在运行），将使用当前包进行增量注入。`);
+            if (!extractAsar(bakPath, backupTempDir, '官方备份')) {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+                return false;
+            }
+            const backupValid = validateExtractedApp(backupTempDir, '官方备份');
+            const backupVersion = readExtractedAppVersion(backupTempDir);
+            const backupPreloadPath = path.join(backupTempDir, 'dist', 'preload.js');
+            const backupIsLocalized = backupValid && fs.readFileSync(backupPreloadPath, 'utf-8').includes(SIGNATURE_START);
+            const backupMatchesCurrent = backupValid && backupVersion === currentVersion;
+            if (!backupMatchesCurrent || backupIsLocalized) {
+                if (backupValid && !backupMatchesCurrent) {
+                    console.error(`[错误] 官方备份版本 ${backupVersion} 与当前客户端版本 ${currentVersion} 不一致。`);
+                }
+                if (backupIsLocalized) console.error('[错误] app.asar.bak 也包含汉化，无法作为官方还原备份。');
+                fs.rmSync(tempDir, { recursive: true, force: true });
+                fs.rmSync(backupTempDir, { recursive: true, force: true });
+                return false;
+            }
+            fs.copyFileSync(bakPath, asarPath);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            fs.renameSync(backupTempDir, tempDir);
+            preloadPath = path.join(tempDir, 'dist', 'preload.js');
+            console.log(`[还原] 已从 Antigravity v${currentVersion} 官方备份开始全新注入。`);
         }
-    }
-
-    // 2. 临时提取目录
-    const tempDir = path.join(__dirname, "_temp_asar");
-    if (fs.existsSync(tempDir)) {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-
-    console.log(`[解包] 正在使用 npx 提取 app.asar...`);
-    const extractRes = runCommandSync(`npx -y @electron/asar extract "${asarPath}" "${tempDir}"`);
-    if (!extractRes.success || !fs.existsSync(tempDir)) {
-        console.error(`[错误] 解包失败，可能是由于系统未安装 Node.js/npm 或者网络限制。`);
-        console.error(`详情: ${extractRes.stderr}\n${extractRes.stdout}`);
+    } catch (e) {
+        if (e.code === 'EACCES' || e.code === 'EPERM' || e.code === 'EROFS') {
+            reportWritePermissionError(resourcesDir, e, '备份或写入');
+        } else {
+            console.error(`[错误] 准备官方备份失败: ${e.message}`);
+        }
+        if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+        if (fs.existsSync(backupTempDir)) fs.rmSync(backupTempDir, { recursive: true, force: true });
         return false;
     }
 
     // 3. 注入 preload.js
-    const preloadPath = path.join(tempDir, "dist", "preload.js");
-    if (!fs.existsSync(preloadPath)) {
-        console.error(`[错误] 解压后未能在指定路径找到 preload.js: ${preloadPath}`);
-        fs.rmSync(tempDir, { recursive: true, force: true });
-        return false;
-    }
-
     console.log(`[修改] 正在向 preload.js 注入汉化代码...`);
     let content = fs.readFileSync(preloadPath, 'utf-8');
 
@@ -2467,6 +2537,16 @@ function install20(resourcesDir) {
     if (fs.existsSync(updaterPath)) {
         console.log(`[修改] 正在向 updater.js 注入更新弹窗汉化...`);
         let updaterContent = fs.readFileSync(updaterPath, 'utf-8');
+
+        const updateMenuTranslations = [
+            ['MenuUpdateStep["CheckForUpdates"] = "Check for Updates";', 'MenuUpdateStep["CheckForUpdates"] = "检查更新";'],
+            ['MenuUpdateStep["CheckingForUpdates"] = "Checking for Updates...";', 'MenuUpdateStep["CheckingForUpdates"] = "正在检查更新...";'],
+            ['MenuUpdateStep["DownloadingUpdate"] = "Downloading Update...";', 'MenuUpdateStep["DownloadingUpdate"] = "正在下载更新...";'],
+            ['MenuUpdateStep["RestartToUpdate"] = "Restart to Update";', 'MenuUpdateStep["RestartToUpdate"] = "重启以更新";'],
+        ];
+        for (const [source, translated] of updateMenuTranslations) {
+            updaterContent = updaterContent.replace(source, translated);
+        }
         
         // 替换 Check for Updates 弹窗的属性
         const targetOptions = `                title: 'Check for Updates',
@@ -2479,6 +2559,42 @@ function install20(resourcesDir) {
         updaterContent = updaterContent.replace(targetOptions, replacementOptions);
         fs.writeFileSync(updaterPath, updaterContent, 'utf-8');
         console.log(`[修改] 更新弹窗汉化注入成功！`);
+    }
+
+    // 3.5 汉化当前目标版本的原生退出确认框。该弹窗由主进程创建，不经过渲染层词典。
+    const mainPath = path.join(tempDir, 'dist', 'main.js');
+    if (fs.existsSync(mainPath)) {
+        let mainContent = fs.readFileSync(mainPath, 'utf-8');
+        const quitDialogSource = `        buttons: ['Cancel', 'Quit'],
+        defaultId: 1,
+        cancelId: 0,
+        title: 'Confirm Quit',
+        message: 'Are you sure you want to quit?',
+        detail: 'There may be agents or background tasks running.',`;
+        const quitDialogTranslation = `        buttons: ['取消', '退出'],
+        defaultId: 1,
+        cancelId: 0,
+        title: '确认退出',
+        message: '确定要退出吗？',
+        detail: '可能仍有智能体或后台任务正在运行。',`;
+        if (mainContent.includes(quitDialogSource)) {
+            mainContent = mainContent.replace(quitDialogSource, quitDialogTranslation);
+            fs.writeFileSync(mainPath, mainContent, 'utf-8');
+            console.log('[修改] 退出确认弹窗汉化成功！');
+        } else {
+            console.warn(`[警告] 未找到 ${currentVersion} 退出确认弹窗的预期结构。`);
+        }
+    }
+
+    // 3.6 汉化系统目录选择器标题；这些文字同样不经过渲染层词典。
+    const ipcHandlersPath = path.join(tempDir, 'dist', 'ipcHandlers.js');
+    if (fs.existsSync(ipcHandlersPath)) {
+        let ipcHandlersContent = fs.readFileSync(ipcHandlersPath, 'utf-8');
+        ipcHandlersContent = ipcHandlersContent
+            .replace("title: 'Open workspace'", "title: '打开工作区'")
+            .replace("title: 'Open workspaces'", "title: '打开多个工作区'");
+        fs.writeFileSync(ipcHandlersPath, ipcHandlersContent, 'utf-8');
+        console.log('[修改] 工作区选择器汉化成功！');
     }
 
     // 4. 重新打包
