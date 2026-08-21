@@ -1,25 +1,28 @@
-# Antigravity 2.0 中文汉化引擎 (Windows/Linux)
+# Antigravity 2.0 中文汉化引擎（Windows / Linux）
 
-> **Fork 自**：[qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn) — 感谢原作者 [qqxpee](https://github.com/qqxpee) 的辛勤付出！
+> 本仓库基于 [Lucian-02/antigravity2-win-linux-cn](https://github.com/Lucian-02/antigravity2-win-linux-cn) 继续适配和维护；核心汉化方案及早期代码参考自 [qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)。感谢两位作者的开源工作。
 
 > **支持系统**：Windows / Linux（含 Ubuntu 等常见发行版，已内置安装与还原脚本）
 >
 > **语言支持**：仅简体中文 (去除了繁体中文及其他冗余翻译，专注极佳的简中开发体验)
 >
-> **匹配版本**：Antigravity v2.8.1
+> **匹配版本**：Antigravity v2.9.1
 >
-> **最近更新**：2026-08-14
+> **最近更新**：2026-08-21
 >
 > **核心运行环境**：Node.js 与 npm（无需 Python、无需安装项目依赖；首次运行会由 `npx` 获取 `@electron/asar`）
 >
-> **汉化范围**：已覆盖 Antigravity v2.8.1 约 99% 的可见界面文案，包括主界面、顶部系统菜单与任务栏菜单、加载页、设置面板、新手引导与登录流程、对话及计划任务管理、MCP 服务器列表，以及各类动态状态、提示和操作反馈。少量内容可能因客户端异步渲染、第三方嵌入或官方后续新增界面而暂未覆盖。
+> **汉化范围**：已按 Antigravity v2.9.1 的客户端包结构完成兼容校验，覆盖主界面、顶部系统菜单与任务栏菜单、加载页、设置面板、新手引导与登录流程、对话及计划任务管理、MCP 服务器列表，以及各类动态状态、提示和操作反馈。少量内容可能因客户端异步渲染、第三方嵌入或官方后续新增界面而暂未覆盖。
 >
 > **注入原理**：通过 ASAR 还原与重包，安全注入 `preload.js` 动态翻译机制，绝不修改核心二进制，一键安装与完美还原。
+
+> [!WARNING]
+> 本项目是社区维护的第三方汉化工具，并非 Google 或 Antigravity 官方产品。请只在上方标明的匹配版本中使用；官方客户端更新后，先等待本仓库适配新版，不要强行向不匹配的版本注入。
 
 > [!IMPORTANT]
 > **聊天历史记录/对话内容隔离与匹配机制说明（开发者必读）**：
 >
-> - **用户消息隔离**：Antigravity 2.8.1 会为每条已发送及历史用户消息标记 `data-testid="user-input-step"`。翻译引擎会跳过该容器及其全部后代节点，因此用户发送的英文原文不会再被界面词条误译。
+> - **用户消息隔离**：Antigravity 2.9.1 会为每条已发送及历史用户消息标记 `data-testid="user-input-step"`。翻译引擎会跳过该容器及其全部后代节点，因此用户发送的英文原文不会再被界面词条误译。
 > - **扩展禁区**：如需为第三方嵌入区或特殊内容区显式禁用翻译，可在容器元素上添加 `data-ag-localization-skip` 属性；该容器及其后代都不会参与翻译。
 > - **核心匹配机制**：
 >   - **精确匹配（任意长度，如 `Knowledge`）**：翻译仅在词条 **完全精准匹配（且单独占一行）** 时触发。如果该词前后有其他任何字符、空格或标点符号（如 `Knowledge是什么`、`哈哈 Knowledge`），则不会触发精确匹配。
@@ -51,7 +54,7 @@
 - **`install.sh`**：Linux 一键汉化执行入口。
 - **`uninstall.sh`**：Linux 一键完美恢复原版入口。
 - **`localization_engine.js`**：核心汉化逻辑，跨平台自动适配，负责 app.asar 的解包、代码注入和重新打包。
-- **`dicts/`**：汉化字典文件夹，内含按模块分类的 JSON 对照翻译字典；当前版本的核心词典为 `dicts/v2.8.1.json`。
+- **`dicts/`**：汉化字典文件夹，内含按模块分类的 JSON 对照翻译字典；当前版本的核心词典为 `dicts/v2.9.1.json`。
 - **`AGENTS.md`**：项目通用规则。支持 `AGENTS.md` 的 AI Agent 会将其作为项目上下文，按其中的汉化边界、动态文案处理与验证要求工作。
 - **`.gitattributes`**：Git 属性规则。它会保护 Windows `.bat` 文件的 GBK/CRLF 字节内容，避免 Git 的自动文本转换破坏安装或卸载脚本，请保留此文件。
 - **`convert_to_gbk.ps1`**：仅供维护者使用的 Windows 批处理文件编码转换脚本。它会将预先准备好的 UTF-8 临时源文件转换为 GBK 编码的 `.bat` 成品；普通安装或卸载时无需运行。
@@ -70,7 +73,7 @@
 * **方法 B：通过 Git 命令行克隆（开发者推荐 💻）**
 
   ```bash
-  git clone https://github.com/Lucian-02/antigravity2-win-linux-cn.git
+  git clone https://github.com/GuoZhenKuang/antigravity2-win-linux-cn.git
   cd antigravity2-win-linux-cn
   ```
 
@@ -111,6 +114,16 @@
    - **Linux**：运行 `sudo ./uninstall.sh`。如自动定位失败，可追加 `--install-dir "/path/to/Antigravity"`。
 3. 运行完成后，软件将自动清除所有汉化注入，无痕恢复至官方原版英文状态。
 
+### 4. Antigravity 更新后的处理方式
+
+官方更新通常会覆盖汉化后的 `app.asar`，界面恢复英文属于正常现象。请先查看本 README 顶部的“匹配版本”：
+
+1. 版本一致：完全退出 Antigravity，重新运行安装脚本。
+2. 版本不一致：暂时保持官方英文版，等待本仓库更新适配后再安装。
+3. 安装后若出现白屏：立即运行卸载脚本恢复官方包，并在 Issues 中附上 Antigravity 版本和日志信息。
+
+本项目不注册定时任务，也不会在后台反复检查更新。
+
 ---
 
 ## 🛠️ 汉化原理说明
@@ -118,12 +131,13 @@
 本引擎采用 **ASAR 包注入模式**，适配 **Antigravity 2.0** 的 Electron 打包结构：
 
 1. **自动释放锁**：脚本运行前会自动探测并安全关闭 Antigravity 进程，防止文件占用锁定。
-2. **安全备份**：首次运行时，会在软件目录自动创建原始 `app.asar.bak` 文件，确保随时可无损还原。
+2. **版本校验与安全备份**：安装前先读取 `app.asar` 内的真实版本，仅对 v2.9.1 注入；检测到官方更新后的干净包时，会刷新 `app.asar.bak`，避免把旧版备份重新覆盖到新版客户端。
 3. **精准注入**：
    - 注入 `preload.js`：采用 WeakSet 记录与 Shadow DOM 穿透，启动高效的 `MutationObserver` 引擎，动态监测并将渲染层文本翻译为中文。
    - 注入 `menu.js`：深度补丁系统级标题栏菜单。
    - 注入 `tray.js`：汉化托盘与右键通知状态菜单。
    - 注入 `loadingOverlay.js`：注入极具极客风格的趣味加载语："反重力引擎已启动，正在摆脱地心引力..."。
+   - 注入 `updater.js`、`main.js` 与 `ipcHandlers.js`：汉化更新状态、退出确认框和系统工作区选择器。
 
 ---
 
@@ -174,7 +188,7 @@
 
 如果您想手动修改翻译，可以直接打开 `dicts/` 目录下的 JSON 文件。引擎会加载其中全部 JSON 词典：
 
-- **`v2.8.1.json`**：Antigravity v2.8.1 的核心版本词典。
+- **`v2.9.1.json`**：Antigravity v2.9.1 的核心版本词典。
 - **`common.json`**：公共基础词汇、侧边栏概览、登录页、常用按钮与权限弹窗等。
 - **`menu_nav.json`**：系统菜单、导航和任务栏菜单。
 - **`page_agents.json`**：Agent、任务与对话相关页面。
@@ -215,9 +229,11 @@
 
 ### 3）软件官方更新后，汉化失效了怎么办？
 
-* 软件升级时，官方会覆盖 `app.asar` 文件。您无需担心，完全退出软件后重新注入即可：Windows 右键以管理员身份运行 `双击安装中文汉化.bat`，Linux 在项目根目录运行 `sudo ./install.sh`。
+* 软件升级时，官方会覆盖 `app.asar`，因此界面恢复英文是正常现象。先确认本页标注的匹配版本与客户端一致；版本一致时，完全退出软件并重新运行安装脚本即可。版本不一致时，安装器会停止而不会盲目修改客户端，需要先更新汉化包的目标版本和注入规则。
 
 ## 🤝 致谢
 
-- 感谢原作者 [qqxpee](https://github.com/qqxpee) 开发并开源了本汉化项目：[antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)
+- 本仓库的 Windows / Linux 工程结构基于 [Lucian-02/antigravity2-win-linux-cn](https://github.com/Lucian-02/antigravity2-win-linux-cn) 继续维护。
+- 核心 ASAR 注入思路、汉化引擎和词典体系参考原作者 [qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)。
+- 本次 v2.9.1 适配增加了版本与备份校验、原生界面补丁，并修复了大型页面初始化时同步扫描导致的白屏问题。
 - 感谢所有参与测试与反馈的贡献者！
